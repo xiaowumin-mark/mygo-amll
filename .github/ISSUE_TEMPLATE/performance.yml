@@ -1,0 +1,36 @@
+name: 性能或内存报告
+description: 提交可比较的基线、采样与资源生命周期证据。
+title: '[Perf] '
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 基线与当前版本/commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 测试环境
+      description: 操作系统、Go/mygo版本、CPU/GPU、内存、刷新率、窗口尺寸、DPI、构建参数及电源模式。
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: 工作负载与重现命令
+      description: 歌词行/字数、重叠行数、字体与背景、seek/切歌次数、预热方法、运行时长。
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: 基线与当前结果
+      description: 附 ns/op、B/op、allocs/op 或帧时p50/p95/p99、Go堆、RSS和GPU资源；标注测试次数。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 采样与生命周期证据
+      description: 可选附脱敏 pprof/trace/截图，以及卸载/销毁/反复切歌后的资源情况。

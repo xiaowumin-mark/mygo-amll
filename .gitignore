@@ -1,1 +1,24 @@
 .codegraph
+
+/ref
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Build, measurement and tooling output
+/artifacts/
+/dist/
+/coverage/
+/profiles/
+*.prof
+*.test
+*.exe
+coverage.out
+__pycache__/
+*.pyc
+
+# Editor-local state
+.idea/
+.vscode/

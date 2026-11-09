@@ -1,31 +1,76 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Scope and Source of Truth
 
-This repository has no application source, tests, assets, or package manifests yet. For the first implementation, prefer `src/` for code, `tests/` for tests, and `assets/` for static resources, adapting to the chosen framework. Keep generated output and dependencies out of version control.
+Build an embeddable Go lyric library with mygo Native UI and custom drawing,
+using AMLL as the behavioral reference. Performance and bounded memory are
+acceptance criteria. Read `docs/implementation.md`, `docs/architecture.md`,
+`docs/performance.md`, and `docs/upstreams.md` before changing these boundaries.
+Distinguish implemented capabilities from proposals and unmeasured targets.
 
-## Build, Test, and Development Commands
+The current implementation contains only `lyric`, `timeline`, and a console
+example. Native rendering, format parsers, and backgrounds are planned.
+Do not introduce empty packages or describe the scaffold as a finished renderer.
 
-No build, test, or development commands are configured. When introducing a toolchain, document prerequisites and exact install, development, build, and test commands here. Do not assume `npm test` or other scripts exist.
+## Structure and Dependencies
 
-- `git status --short`: inspect pending changes before committing.
-- `git diff --check`: check tracked changes for whitespace errors.
+- Module: `github.com/xiaowumin-mark/mygo-amll`; Go 1.27.3+.
+- Use conventional Go package directories without an extra `src/` layer.
+- Keep pure data/time packages independent of mygo, audio playback, and I/O.
+- Tests live beside code as `*_test.go`; runnable integrations in `examples/`.
+- `ref/` and `.codegraph/` are ignored local references/tool state, not dependencies.
+- Add mygo at a verified pinned version when the Native adapter is implemented;
+  use only public APIs, never upstream `internal/*` or private resource methods.
+- License is AGPL-3.0-only. Preserve upstream attribution and review file-level
+  licenses before importing code, shaders, or assets.
 
-## Coding Style & Naming Conventions
+## Commands and Formatting
 
-Use UTF-8 and the selected language's standard formatter. Add formatter configuration with the first source files. Use two spaces for YAML and nested Markdown lists. Choose descriptive names following framework conventions. Separate formatting-only changes from behavior changes.
+- `python scripts/check.py`: gofmt check, vet, race tests, title checker tests,
+  and tracked whitespace validation. Python 3.11+ is required.
+- `python scripts/check.py --no-race`: local fallback only when the C toolchain
+  is unavailable; CI must still run race checks.
+- `gofmt -w lyric timeline examples`: format the current Go sources.
+- `go run ./examples/timeline`: run the UI-independent example.
+- `go test ./... -run '^$' -bench . -benchmem -count 5`: collect core benchmarks.
+- `git status --short` and `git diff --check`: inspect pending changes.
 
-## Testing Guidelines
+Use UTF-8, LF, gofmt, and standard-library tests. YAML and nested Markdown lists
+use two spaces. Follow `.editorconfig` and `docs/development.md`. Do not assume
+npm, a graph environment, or a package manager is required for the pure core.
 
-No testing framework or coverage threshold exists yet. Add tests with the first executable functionality and document the test command. Follow framework test filename conventions. Cover normal behavior, edge cases, and regressions. Report validation that could not run.
+## Correctness, Performance, and Ownership
 
-## Commit & Pull Request Guidelines
+Document timing units, half-open intervals, slice ownership, and concurrency.
+Preserve overlapping lines and seek correctness; active playback and persistent
+visual highlighting are different states. Reusable query buffers belong to the
+caller. Never expose mutable backing slices from immutable documents.
 
-There is no commit history establishing a message convention. Use concise, imperative subjects, such as `Add development setup`. Keep commits and pull requests focused. Describe the change, its purpose, and validation performed; link relevant issues and include screenshots for visible UI changes.
+Keep parsing, I/O, shaping, shader compilation, and full-document traversal out
+of the per-frame hot path. Budget caches by bytes and entries, define invalidation
+and cancellation, and release old document references on song changes. Draw may
+run multiple times per frame; do not advance business state there. UI resources
+belong to the UI thread. Explicitly distinguish UTF-8 byte, rune, and UTF-16 indices.
 
-## Security & Configuration
+Tests cover normal, edge, error, overlap, and seek behavior. Use synthetic or
+authorized fixtures and deterministic clocks. For performance changes include
+before/after benchmark evidence and allocation results. Real window/GPU/RSS
+measurements cannot be replaced by pure Go or headless CPU tests.
 
-Never commit credentials or local secrets. Ignore local configuration files and provide sanitized examples when configuration is introduced.
+## Contributions and Automation
+
+Follow `CONTRIBUTING.md`, `GOVERNANCE.md`, and `docs/commit-convention.md`.
+Use Conventional Commit PR titles and squash merge. Public APIs, resource models,
+and major dependencies require a design discussion. Keep changes focused;
+separate formatting-only changes from behavior changes.
+
+GitHub Actions are pinned to full commits and PR checks are read-only. Do not
+execute PR code through privileged triggers. Release-please maintains the release
+PR, tags, and changelog; do not fabricate a published version or bypass review.
+See `docs/releases.md` for manual GitHub settings that YAML cannot enable.
+
+Never commit credentials, local secrets, reference repositories, generated output,
+or profiling artifacts. Report any check or platform validation that could not run.
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph

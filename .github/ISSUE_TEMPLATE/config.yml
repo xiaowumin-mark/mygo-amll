@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 贡献与开发流程
+    url: https://github.com/xiaowumin-mark/mygo-amll/blob/master/CONTRIBUTING.md
+    about: 首次贡献前请阅读开发、验证和提交流程。

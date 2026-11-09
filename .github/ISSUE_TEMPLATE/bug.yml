@@ -1,0 +1,34 @@
+name: 缺陷报告
+description: 报告与已实现功能相关的可复现问题。
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: 请只提交拥有再分发权限的最小歌词/字体/图片。尚未实现的功能请使用功能提案。
+  - type: input
+    id: version
+    attributes:
+      label: 版本或 commit
+      description: 提供 mygo-amll 的 tag/commit；涉及 Native 时也提供 mygo 版本。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: 操作系统、CPU/GPU、Go版本、DPI/缩放、字体及后端（如适用）。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小复现与实际行为
+      description: 提供最小代码/数据、操作步骤及日志。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true

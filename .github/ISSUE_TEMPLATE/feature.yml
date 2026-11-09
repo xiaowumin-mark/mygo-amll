@@ -1,0 +1,25 @@
+name: 功能或设计提案
+description: 讨论使用场景、公共 API 和模块边界。
+title: '[Feature] '
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与现有困难
+      description: 说明使用者希望完成什么，以及现有接口的不足。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议行为或 API
+      description: 公共 API/新依赖请先给出提案；附示例调用及兼容性分析。
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 性能、内存与平台约束
+      description: 说明帧预算、缓存上限、资源归属及替代方案；暂不明确时写明待验证项。
+    validations:
+      required: true
