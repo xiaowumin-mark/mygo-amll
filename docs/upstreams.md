@@ -11,7 +11,7 @@
 | [MyGo](https://github.com/egoist/mygo) | [`eadf1fce6af3bdb9f7cacf649823de2bee2737f2`](https://github.com/egoist/mygo/tree/eadf1fce6af3bdb9f7cacf649823de2bee2737f2) | Native UI、文字塑形、自绘及 GPU 后端 | [MIT](https://github.com/egoist/mygo/blob/eadf1fce6af3bdb9f7cacf649823de2bee2737f2/LICENSE) |
 | [Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics) | [`f32285864056587c4afa59d310208b0aa829cb53`](https://github.com/amll-dev/applemusic-like-lyrics/tree/f32285864056587c4afa59d310208b0aa829cb53) | 歌词数据、播放行为、视觉效果和背景的参考 | [AGPL-3.0-only 声明](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/package.json#L4)、[许可证全文](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/LICENSE) |
 
-`ref/` 是本地调研副本，已忽略，不是运行依赖，也不随本库发布。本次初始化未复制 AMLL 的歌词或背景渲染源码；原生适配及视觉效果仍待实现。本库默认采用 AGPL-3.0-only。后续移植代码、shader、测试夹具或资源时，必须记录来源、提交和修改情况，保留适用的版权及许可证声明。MyGo 的 MIT 许可不改变 AMLL 原始材料的许可；AGPL 本身也不授予歌词、字体、专辑封面或商标的使用权。
+`ref/` 是本地调研副本，已忽略，不是运行依赖，也不随本库发布。未复制 AMLL 的歌词或背景渲染源码。M1 已在 `examples/native` 接入上述 mygo 快照，固定模块版本为 `v0.8.4-0.20261109104234-eadf1fce6af3`，提交 `go.sum`，无 `replace`；稳定组件和后续视觉效果仍待实现，平台验证见 [M1 记录](m1-native.md)。本库默认采用 AGPL-3.0-only。后续移植代码、shader、测试夹具或资源时，必须记录来源、提交和修改情况，保留适用的版权及许可证声明。MyGo 的 MIT 许可不改变 AMLL 原始材料的许可；AGPL 本身也不授予歌词、字体、专辑封面或商标的使用权。实际依赖的许可证原文与用途见 [第三方声明](../THIRD_PARTY_NOTICES.md)。
 
 ## AMLL：参考行为与迁移边界
 
@@ -71,7 +71,7 @@ MyGo 的 view 在 UI 主线程执行，`ui.Element` 只对当前 build pass 有�
 
 ## 工具链与平台条件
 
-接入该 MyGo 快照至少需要 **Go 1.27.3**，以其 [go.mod](https://github.com/egoist/mygo/blob/eadf1fce6af3bdb9f7cacf649823de2bee2737f2/go.mod#L3) 为准。当前纯 Go 核心模块的实际工具链声明见仓库根 `go.mod`；本次初始化不因文档调研而隐式引入 MyGo 依赖。原生适配落地时需锁定可解析的模块版本并提交 `go.sum`，不能依赖 `@latest` 或开发者机器上的 `replace`。
+接入该 MyGo 快照至少需要 **Go 1.27.3**，以其 [go.mod](https://github.com/egoist/mygo/blob/eadf1fce6af3bdb9f7cacf649823de2bee2737f2/go.mod#L3) 为准。当前工具链与固定模块版本见仓库根 `go.mod` / `go.sum`。M0 只有纯 Go 核心；M1 为实际原生示例加入固定依赖，不依赖 `@latest` 或开发者机器上的 `replace`。
 
 | 平台 | 原生绘制路径 | 运行条件和降级 |
 | --- | --- | --- |
@@ -87,7 +87,7 @@ MyGo 的基础原生 UI 是纯 Go、无 cgo 构建；Native UI 应用不需要 B
 
 本次调研另在临时独立模块中完成了公开 API 冒烟验证：Windows/amd64、Go 1.27.3、`CGO_ENABLED=0`，使用上述固定提交的干净源码作为本地 `replace`，`go test -v ./...` 通过。验证组合包括 `WindowOptions.Content: ui.View(...)` 类型检查、CJK/RTL 混合行的 Shape/ShapeText、TextLayout、glyph 裁剪、Canvas、shader 编译及 Values 参数，以及 `ui.NewTester` 输出像素检查。它是一次无窗口的 CPU 可行性检查，未创建真实原生窗口、未测硬件 GPU、未检验动画性能；临时模块不属于本库交付物，也不替代后续仓内示例与 CI。主仓没有因此引入 MyGo 依赖。
 
-原生适配合入前需要补齐以下证据：
+正式原生组件合入前需要补齐以下证据，M1 的已测子集和未测项见 [当前记录](m1-native.md)：
 
 1. 固定依赖版本的可编译原生示例，以及三平台真实窗口运行记录。
 2. 长歌词可见行剔除、逐词高亮与完整行换行；CJK、emoji、组合字符、连字、混合 RTL 的几何正确性。

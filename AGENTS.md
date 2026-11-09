@@ -8,9 +8,11 @@ acceptance criteria. Read `docs/implementation.md`, `docs/architecture.md`,
 `docs/performance.md`, and `docs/upstreams.md` before changing these boundaries.
 Distinguish implemented capabilities from proposals and unmeasured targets.
 
-The current implementation contains only `lyric`, `timeline`, and a console
-example. Native rendering, format parsers, and backgrounds are planned.
-Do not introduce empty packages or describe the scaffold as a finished renderer.
+The current implementation contains `lyric`, `timeline`, a console example,
+and an experimental Native UI spike in `examples/native`. See `docs/m1-native.md`
+for validation gaps; there is no stable Native component API. Format parsers and
+dynamic backgrounds remain planned. Do not introduce empty packages or describe
+the spike as a finished renderer.
 
 ## Structure and Dependencies
 
@@ -19,8 +21,8 @@ Do not introduce empty packages or describe the scaffold as a finished renderer.
 - Keep pure data/time packages independent of mygo, audio playback, and I/O.
 - Tests live beside code as `*_test.go`; runnable integrations in `examples/`.
 - `ref/` and `.codegraph/` are ignored local references/tool state, not dependencies.
-- Add mygo at a verified pinned version when the Native adapter is implemented;
-  use only public APIs, never upstream `internal/*` or private resource methods.
+- Keep mygo at its verified pinned version for the Native spike; use only public
+  APIs, never upstream `internal/*` or private resource methods.
 - License is AGPL-3.0-only. Preserve upstream attribution and review file-level
   licenses before importing code, shaders, or assets.
 

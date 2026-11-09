@@ -2,7 +2,7 @@
 
 ## 环境与命令
 
-Go 最低 1.27.3，与当前 mygo 快照一致；Python 最低 3.11 用于零第三方依赖的仓库检查脚本。当前核心没有第三方 Go 依赖，因此没有 `go.sum`，也不需要 `go install`、npm 或图形运行库。
+Go 最低 1.27.3，与当前 mygo 快照一致；Python 最低 3.11 用于零第三方依赖的仓库检查脚本。主模块为 M1 示例固定 mygo 并提交 `go.sum`；核心包 import 图仍只有标准库和本库。运行核心不需要图形环境，原生示例的平台依赖见 [M1 说明](m1-native.md)。无需 `go install` 或 npm。
 
 | 任务 | 命令 |
 | --- | --- |
@@ -14,6 +14,7 @@ Go 最低 1.27.3，与当前 mygo 快照一致；Python 最低 3.11 用于零第
 | 静态检查 | `go vet ./...` |
 | 基准 | `go test ./... -run '^$' -bench . -benchmem -count 5` |
 | 示例 | `go run ./examples/timeline` |
+| 原生示例 | `go run ./examples/native`、`go run ./examples/native -software -smoke` |
 | 工作区/空白检查 | `git status --short`、`git diff --check` |
 | 提交标题检查 | `python scripts/check_pr_title.py "feat(timeline): add seek state"` |
 
