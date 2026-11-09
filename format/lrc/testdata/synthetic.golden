@@ -1,0 +1,14 @@
+ti=Synthetic fixture
+ar=Example author
+offset=100
+lrc:5:0 [1100,3100) "Opening"
+lrc:4:0 [3100,4100) "山 and 👩\u200d💻"
+  [3100,3600) "山"
+  [3600,4100) " and 👩\u200d💻"
+lrc:6:0 [3100,7100) "Second voice"
+lrc:4:1 [7100,8100) "山 and 👩\u200d💻"
+  [7100,7600) "山"
+  [7600,8100) " and 👩\u200d💻"
+lrc:7:0 [9600,14600) "Ending"
+diagnostic sorted
+diagnostic inferred-end
