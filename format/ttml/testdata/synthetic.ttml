@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:amll="http://www.example.com/ns/amll" xml:lang="zh">
+  <head><metadata><ttm:title>合成测试</ttm:title><ttm:agent xml:id="v2"><ttm:name>Second voice</ttm:name></ttm:agent><amll:meta key="album" value="Synthetic"/></metadata></head>
+  <body><div>
+    <p xml:id="main" begin="1s" end="5s" ttm:agent="v2"><span begin="1s" end="2s">晨</span> <span begin="2s" end="3s"><![CDATA[光 & 风]]></span><span ttm:role="x-translation">Morning</span><span ttm:role="x-roman">chen guang</span><span ttm:role="x-bg" xml:id="back" begin="1.5s" end="4s"><span begin="1.5s" end="4s">和声</span></span></p>
+    <p xml:id="last" begin="00:06.000" dur="2s">  A   new
+      day  </p>
+  </div></body>
+</tt>

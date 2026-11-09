@@ -8,12 +8,13 @@ Go 最低 1.27.3，与当前 mygo 快照一致；Python 最低 3.11 用于零第
 | --- | --- |
 | 完整本地检查 | `python scripts/check.py` |
 | 缺少 race 工具链时的部分检查 | `python scripts/check.py --no-race` |
-| 格式化 | `gofmt -w lyric timeline examples` |
+| 格式化 | `gofmt -w lyric timeline format internal examples` |
 | 测试 | `go test ./...` |
 | 并发检查 | `go test -race ./...` |
 | 静态检查 | `go vet ./...` |
 | 基准 | `go test ./... -run '^$' -bench . -benchmem -count 5` |
 | 示例 | `go run ./examples/timeline` |
+| 格式与视觉状态示例 | `go run ./examples/formats -format lrc -at 5s` |
 | 原生示例 | `go run ./examples/native`、`go run ./examples/native -software -smoke` |
 | 工作区/空白检查 | `git status --short`、`git diff --check` |
 | 提交标题检查 | `python scripts/check_pr_title.py "feat(timeline): add seek state"` |
