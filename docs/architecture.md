@@ -1,6 +1,6 @@
 # 模块设计
 
-状态：2026-11-09 的初始设计。只有下文标为“已实现”的包属于当前源码；其余是实施契约，不是已可调用 API。当前主模块为 `github.com/xiaowumin-mark/mygo-amll`，采用 Go 原生目录约定，不设置多余的 `src/` 层。
+状态：2026-11-09。纯 Go 核心和 `examples/native` 的 M1 技术验证已有源码；下文仍标“规划”的包是实施契约，不是已可调用 API。M1 示例内的非导出类型不构成公共组件。当前主模块为 `github.com/xiaowumin-mark/mygo-amll`，采用 Go 原生目录约定，不设置多余的 `src/` 层。
 
 ## 依赖方向
 
@@ -31,7 +31,7 @@ flowchart TD
 | `background` | 静态背景、封面颜色、低分辨率 shader 和转场 | 规划 |
 | `native/mygo` | Native UI 容器、UI 线程资源、动画调度、输入与无障碍 | 规划 |
 | `internal/...` | 可更换的缓存和几何实现；禁止宿主依赖 | 按需要添加 |
-| `examples/...` | 小型可运行集成，合成或授权资产 | 仅有时间索引示例 |
+| `examples/...` | 小型可运行集成，合成或授权资产 | 时间索引及 M1 Native 技术验证示例；平台验收见 [记录](m1-native.md) |
 
 ## 文档与时间语义
 

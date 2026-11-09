@@ -35,12 +35,16 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: ${{ matrix.go }}
-          cache: false # Enable when the module has dependency checksums.
+          cache: true
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
       - name: Check formatting, vet, tests and race detector
         run: python scripts/check.py
+      - name: Build Native example without cgo (not a real-window test)
+        env:
+          CGO_ENABLED: '0'
+        run: go build -o "${{ runner.temp }}/mygo-amll-native" ./examples/native
 
   benchmark:
     name: Core benchmark report
@@ -53,7 +57,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27.3'
-          cache: false
+          cache: true
       - name: Record benchmark environment and results
         shell: bash
         run: |
