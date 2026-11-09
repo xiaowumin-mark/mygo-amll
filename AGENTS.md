@@ -8,11 +8,12 @@ acceptance criteria. Read `docs/implementation.md`, `docs/architecture.md`,
 `docs/performance.md`, and `docs/upstreams.md` before changing these boundaries.
 Distinguish implemented capabilities from proposals and unmeasured targets.
 
-The current implementation contains `lyric`, `timeline`, a console example,
-and an experimental Native UI spike in `examples/native`. See `docs/m1-native.md`
-for validation gaps; there is no stable Native component API. Format parsers and
-dynamic backgrounds remain planned. Do not introduce empty packages or describe
-the spike as a finished renderer.
+The current implementation contains `lyric`, `timeline`, bounded format parsers,
+console examples, and an experimental Native UI spike in `examples/native`.
+See `docs/m1-native.md` for Native validation gaps and `docs/m2-core-formats.md`
+for parser subsets and the owner-accepted M2 scope; there is no stable Native component
+API. Dynamic backgrounds remain planned. Do not introduce empty packages or
+describe the spike as a finished renderer.
 
 ## Structure and Dependencies
 
@@ -32,7 +33,7 @@ the spike as a finished renderer.
   and tracked whitespace validation. Python 3.11+ is required.
 - `python scripts/check.py --no-race`: local fallback only when the C toolchain
   is unavailable; CI must still run race checks.
-- `gofmt -w lyric timeline examples`: format the current Go sources.
+- `gofmt -w lyric timeline format internal examples`: format the current Go sources.
 - `go run ./examples/timeline`: run the UI-independent example.
 - `go test ./... -run '^$' -bench . -benchmem -count 5`: collect core benchmarks.
 - `git status --short` and `git diff --check`: inspect pending changes.

@@ -7,7 +7,7 @@
 | [AMLL](https://github.com/amll-dev/applemusic-like-lyrics/tree/f32285864056587c4afa59d310208b0aa829cb53) | `f32285864056587c4afa59d310208b0aa829cb53` | AGPL-3.0-only | 行为、模块与性能设计参考；本地 `ref/` 不跟踪/分发 |
 | [mygo](https://github.com/egoist/mygo/tree/eadf1fce6af3bdb9f7cacf649823de2bee2737f2) | `eadf1fce6af3bdb9f7cacf649823de2bee2737f2` | MIT | M1 原生示例的固定依赖；核心包 import 图仍无 UI |
 
-当前 `lyric`、`timeline` 和示例是本仓新建的最小 Go 实现，并非已经完成的 AMLL 渲染器移植。添加实际复制/翻译的代码、shader、fixture 或图片时，必须逐项记录原作者、源文件、commit、许可证与修改，并保留必要版权声明。mygo 成为实际依赖时须遵守其 MIT notice；构建的分发物应包含所需第三方声明。
+当前 `lyric`、`timeline`、`format` 解析器和示例是本仓新建的 Go 实现，并非已经完成的 AMLL 渲染器移植。M2 参考固定快照的时间/滚动行为与格式约定，没有复制其源码或夹具；新增测试和示例文本均为合成输入。添加实际复制/翻译的代码、shader、fixture 或图片时，必须逐项记录原作者、源文件、commit、许可证与修改，并保留必要版权声明。mygo 成为实际依赖时须遵守其 MIT notice；构建的分发物应包含所需第三方声明。
 
 M1 使用 mygo 的公开 API，没有复制其绘制后端或 AMLL 源码。实际使用的第三方模块及许可原文如下；`LICENSES/` 只保留对应固定模块的 LICENSE，未修改正文。发布可执行分发物时须随附所需许可/notice，并重新检查其完整依赖与文件级声明。
 

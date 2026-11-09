@@ -2,17 +2,17 @@
 
 使用 [mygo Native UI](https://github.com/egoist/mygo) 与自定义 GPU 绘制实现的可嵌入歌词库，行为目标参考 [Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics)。重点是逐词歌词、背景效果，以及持续播放场景中的帧耗时和内存控制。
 
-**当前提供纯 Go 核心与 M1 Native UI 技术验证示例，尚无稳定的原生歌词组件或已发布版本。** M1 Windows 已由维护者确认验收通过；macOS/Linux 暂缓，未经实测的性能指标仍保留为未测，详见 [M1 记录](docs/m1-native.md)。`ref/` 是本地调研副本，不会随库分发。
+**当前提供纯 Go 核心、M2 格式解析与时间状态，以及 M1 Native UI 技术验证示例，尚无稳定的原生歌词组件或已发布版本。** M2 已由所有者确认验收通过，支持子集见 [M2 说明](docs/m2-core-formats.md)。M1 Windows 已由维护者确认验收通过；macOS/Linux 暂缓，未经实测的性能指标仍保留为未测，详见 [M1 记录](docs/m1-native.md)。`ref/` 是本地调研副本，不会随库分发。
 
 ## 当前可用
 
 | 内容 | 状态 |
 | --- | --- |
-| `lyric`：只读文档、绝对时间区间、基础逐词/翻译/音译/对唱元数据 | 已实现并测试 |
-| `timeline`：活动行查询、重叠区间、双向 seek、复用结果缓冲区 | 已实现并测试 |
+| `lyric`：只读文档、绝对时间区间、逐词/翻译/音译/对唱、行身份与源元数据 | 已实现并测试 |
+| `timeline`：活动/保留高亮/焦点、间奏/曲终、双向 seek、手动跟随控制 | 已实现并测试；M2 验收通过 |
 | Native UI 多行自绘、整行换行与逐词裁剪、播放控制 | `examples/native` 技术验证；完整平台验收待补 |
 | 稳定原生组件、精细 cluster 高亮与弹簧滚动 | 已设计，待后续实现 |
-| LRC / ESLRC / YRC / QRC / TTML 解析 | 已规划，待实现 |
+| LRC / 增强 LRC / 明文 YRC / 明文 QRC / TTML 歌词子集解析 | 已实现并测试；[限制与语法](docs/m2-core-formats.md)，M2 验收通过 |
 | 静态背景 | 原生示例可选渐变；动态背景/封面转场仍待实现 |
 | CI、贡献入口、Conventional Commits、release PR 自动发版 | 配置已添加，远程启用步骤见下文 |
 
@@ -24,6 +24,7 @@
 git clone https://github.com/xiaowumin-mark/mygo-amll.git
 cd mygo-amll
 go run ./examples/timeline
+go run ./examples/formats -format lrc -at 5s
 go run ./examples/native
 python scripts/check.py
 go test ./... -run '^$' -bench . -benchmem
@@ -40,6 +41,7 @@ go test ./... -run '^$' -bench . -benchmem
 - [性能与内存预算](docs/performance.md)
 - [本次验证记录与核心基准](docs/validation.md)
 - [M1 原生示例与验收记录](docs/m1-native.md)
+- [M2 歌词核心与格式验收](docs/m2-core-formats.md)
 - [开发规则与检查命令](docs/development.md)
 - [上游快照和能力核对](docs/upstreams.md)
 - [Native UI 技术决策](docs/adr/0001-native-rendering.md)
