@@ -5,9 +5,21 @@
 | 项目 | 固定调研 commit | 许可 | 当前用途 |
 | --- | --- | --- | --- |
 | [AMLL](https://github.com/amll-dev/applemusic-like-lyrics/tree/f32285864056587c4afa59d310208b0aa829cb53) | `f32285864056587c4afa59d310208b0aa829cb53` | AGPL-3.0-only | 行为、模块与性能设计参考；本地 `ref/` 不跟踪/分发 |
+| [AMLL TTML DB](https://github.com/amll-dev/amll-ttml-db/tree/6007fcdf33bf838bea0304292992bbdc1d6e2bea) | `6007fcdf33bf838bea0304292992bbdc1d6e2bea` | 自主编写部分 CC0-1.0；外来数据依原提供方授权 | 所有者指定的本地解析兼容性语料；歌词、仓库和生成输出不随库分发 |
 | [mygo](https://github.com/egoist/mygo/tree/eadf1fce6af3bdb9f7cacf649823de2bee2737f2) | `eadf1fce6af3bdb9f7cacf649823de2bee2737f2` | MIT | M1 原生示例的固定依赖；核心包 import 图仍无 UI |
 
-当前 `lyric`、`timeline`、`format` 解析器和示例是本仓新建的 Go 实现，并非已经完成的 AMLL 渲染器移植。M2 参考固定快照的时间/滚动行为与格式约定，没有复制其源码或夹具；新增测试和示例文本均为合成输入。添加实际复制/翻译的代码、shader、fixture 或图片时，必须逐项记录原作者、源文件、commit、许可证与修改，并保留必要版权声明。mygo 成为实际依赖时须遵守其 MIT notice；构建的分发物应包含所需第三方声明。
+当前 `lyric`、`timeline`、`format` 解析器和示例是本仓新建的 Go 实现，并非已经完成的 AMLL 渲染器移植。新增测试和示例文本均为合成输入。本轮 M2 格式兼容算法在阅读并执行下列固定源码后按其行为重新实现，具体映射见下表；不能把这部分算法来源写成与上游完全无关。添加实际复制/翻译的代码、shader、fixture 或图片时，必须逐项记录原作者、源文件、commit、许可证与修改，并保留必要版权声明。mygo 成为实际依赖时须遵守其 MIT notice；构建的分发物应包含所需第三方声明。
+
+| M2 参考来源（AMLL contributors） | 本仓实现与改动 |
+| --- | --- |
+| [`packages/ttml/src/parser.ts`](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/packages/ttml/src/parser.ts)，固定提交 `f32285864056587c4afa59d310208b0aa829cb53`，AGPL-3.0-only | `format/ttml` 的绝对时间、空白、背景区间、Ruby、内联注释和 Apple sidecar 结构规则；使用 Go XML 流和受限段落/sidecar 工作区重新实现，增加命名空间严格验证、资源预算、取消、诊断及不可变文档快照 |
+| [`packages/ttml/src/utils/amll-converter.ts`](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/packages/ttml/src/utils/amll-converter.ts)，同一固定提交，AGPL-3.0-only | `format/ttml/agents.go` 的 typed agent 对唱交替、`sidecar.go` 的首注释选择及逐词音译匹配；以 Go 重写，增加每次解析的有界匹配工作量和取消检查，保留宿主需要的稳定行身份/背景关联 |
+| [`packages/lyric/src/formats/lrc/index.ts`](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/packages/lyric/src/formats/lrc/index.ts)、同目录 [`parser.ts`](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/packages/lyric/src/formats/lrc/parser.ts)、`helpers.ts` / `metadata.ts`，同一固定提交，AGPL-3.0-only | `format/lrc` 的普通/增强 LRC 时间标签、逐词文本、背景括号、辅助行、metadata 去重与行词结束推断；以 Go 重写，保留源时间并增加输入/输出预算、取消检查和不可变快照，未引入上游 generator 或运行依赖 |
+| [`packages/lyric/src/formats/yrc.ts`](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/packages/lyric/src/formats/yrc.ts) 与 [`qrc.ts`](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/packages/lyric/src/formats/qrc.ts)，同一固定提交，AGPL-3.0-only | `format/yrc`、`format/qrc` 及 `internal/timedtext` 的明文行头、词标记惰性扫描、空格、背景括号和原始端点行为；以 Go 扫描器重新实现，增加数字溢出保护、资源预算、取消和稳定行排序，不包含服务容器、压缩或加密格式 |
+
+以上 TypeScript 源文件和其运行依赖未直接作为本库模块或生成产物加入。算法修改在本库 AGPL-3.0-only 下提供，来源说明不替代上游及本库的许可证正文。具体数据契约与兼容扩展见 [RFC 0005](docs/rfcs/0005-m2-corpus-compatibility.md)。
+
+AMLL TTML DB 的 [共享说明](https://github.com/amll-dev/amll-ttml-db/blob/6007fcdf33bf838bea0304292992bbdc1d6e2bea/README.md#共享协议) 明确区分提交者自主编写和外来数据，不能把根 CC0 文件解释为所有歌词均可任意再分发。本次仅按所有者要求在被忽略的 `ref/` 中进行兼容性验证；不复制歌词样本到测试、不分发语料或解析后的歌词输出。回归测试使用等价的合成结构。
 
 M1 使用 mygo 的公开 API，没有复制其绘制后端或 AMLL 源码。实际使用的第三方模块及许可原文如下；`LICENSES/` 只保留对应固定模块的 LICENSE，未修改正文。发布可执行分发物时须随附所需许可/notice，并重新检查其完整依赖与文件级声明。
 

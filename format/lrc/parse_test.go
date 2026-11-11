@@ -10,6 +10,7 @@ import (
 	"time"
 
 	common "github.com/xiaowumin-mark/mygo-amll/format"
+	"github.com/xiaowumin-mark/mygo-amll/lyric"
 )
 
 func TestGolden(t *testing.T) {
@@ -17,10 +18,19 @@ func TestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := os.ReadFile("testdata/synthetic.golden")
-	if err != nil {
-		t.Fatal(err)
-	}
+	want := []byte(`ti=Synthetic fixture
+ar=Example author
+offset=100
+lrc:5:0 [1000,3000) "Opening"
+  [1000,3000) "Opening"
+lrc:4:0 [3000,4000) "山 and 👩\u200d💻"
+  translation "Second voice"
+  [3000,3500) "山"
+  [3500,4000) " and 👩\u200d💻"
+lrc:7:0 [9500,59999999) "Ending"
+  [9500,59999999) "Ending"
+diagnostic sorted
+`)
 	result, err := Parse(context.Background(), data, common.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -33,6 +43,9 @@ func TestGolden(t *testing.T) {
 	for i := 0; i < result.Document.Len(); i++ {
 		line := result.Document.Line(i)
 		fmt.Fprintf(&got, "%s [%d,%d) %q\n", line.ID(), line.Start().Milliseconds(), line.End().Milliseconds(), line.Text())
+		if line.Translation() != "" {
+			fmt.Fprintf(&got, "  translation %q\n", line.Translation())
+		}
 		for j := 0; j < line.WordCount(); j++ {
 			word := line.Word(j)
 			fmt.Fprintf(&got, "  [%d,%d) %q\n", word.Start.Milliseconds(), word.End.Milliseconds(), word.Text)
@@ -89,7 +102,7 @@ func TestBOMSourceColumns(t *testing.T) {
 		{"\ufeff[bad", "invalid-tag", 4},
 		{"\ufeff  untimed", "untimed-line", 6},
 		{"\ufeff[ti:x]tail", "metadata-tail", 10},
-		{"\ufeff[00:60]x", "invalid-timestamp", 4},
+		{"\ufeff[00:xx]x", "invalid-timestamp", 4},
 		{"\ufeff[00:01]<oops>", "invalid-word-timestamp", 11},
 	} {
 		result, err := Parse(context.Background(), []byte(tc.input), common.Options{Duration: 2 * time.Second})
@@ -106,16 +119,16 @@ func TestBOMSourceColumns(t *testing.T) {
 			t.Fatalf("strict %q: expected source column %d, got %v", tc.input, tc.column, err)
 		}
 	}
-	_, err := Parse(context.Background(), []byte("\ufeff[offset:bad]"), common.Options{})
-	var located *common.ParseError
-	if !errors.As(err, &located) || located.Column != 4 {
-		t.Fatalf("invalid offset should locate the source tag after the BOM: %v", err)
+	result, err := Parse(context.Background(), []byte("\ufeff[offset:bad]\n[00:01]line"), common.Options{Duration: 3 * time.Second})
+	if err != nil || result.Document.Line(0).Start() != time.Second || result.Document.Property(0).Value != "bad" {
+		t.Fatalf("LRC offset must remain AMLL metadata rather than shift timestamps: %+v %v", result, err)
 	}
+	var located *common.ParseError
 	_, err = Parse(context.Background(), []byte("\ufeff[00:01][00:02]x"), common.Options{Limits: common.Limits{MaxLines: 1}})
 	if !errors.As(err, &located) || located.Column != 11 {
 		t.Fatalf("repeated timestamp should count BOM bytes in its source column: %v", err)
 	}
-	result, err := Parse(context.Background(), []byte("\ufeff\nuntimed"), common.Options{})
+	result, err = Parse(context.Background(), []byte("\ufeff\nuntimed"), common.Options{})
 	if err != nil || len(result.Diagnostics) != 1 || result.Diagnostics[0].Line != 2 || result.Diagnostics[0].Column != 1 {
 		t.Fatalf("BOM offset leaked into later lines: %+v %v", result, err)
 	}
@@ -127,16 +140,16 @@ func TestDuplicateStartsAndZeroWords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Document.Len() != 2 || result.Document.Line(0).Text() != "AB" || result.Document.Line(0).WordCount() != 1 || result.Document.Line(0).Word(0).Text != "B" {
+	if result.Document.Len() != 1 || result.Document.Line(0).Text() != "AB" || result.Document.Line(0).WordCount() != 2 || result.Document.Line(0).Word(0).Text != "A" || result.Document.Line(0).Word(0).Start != 0 || result.Document.Line(0).Word(0).End != 0 || result.Document.Line(0).Word(1).Text != "B" {
 		t.Fatalf("zero-duration normalization lost text: %#v", result)
 	}
-	if result.Document.Line(0).ID() == result.Document.Line(1).ID() || result.Document.Line(1).Text() != "another voice" {
-		t.Fatal("equal starts must retain distinct line identities and text")
+	if result.Document.Line(0).Translation() != "another voice" {
+		t.Fatal("same-start LRC text should attach as translation to the first matching row")
 	}
-	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "zero-word" {
-		t.Fatalf("expected zero-word diagnostic, got %#v", result.Diagnostics)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("source point timing must be retained without cleanup: %#v", result.Diagnostics)
 	}
-	if result.Document.Line(0).Duet() || result.Document.Line(1).Background() {
+	if result.Document.Line(0).Duet() || result.Document.Line(0).Background() {
 		t.Fatal("LRC must not invent voice roles from duplicate timestamps")
 	}
 }
@@ -148,12 +161,13 @@ func TestOffsetAndFinalLine(t *testing.T) {
 		start, end  time.Duration
 		codes       []string
 	}{
-		{"negative", "[offset:-100]\n[00:01]a", common.Options{}, 900 * time.Millisecond, 5900 * time.Millisecond, []string{"inferred-end"}},
-		{"positive", "[offset:+100]\n[00:01]a", common.Options{Duration: 3 * time.Second}, 1100 * time.Millisecond, 3 * time.Second, nil},
-		{"duplicate", "[offset:100]\n[offset:200]\n[00:01]a", common.Options{Duration: 3 * time.Second}, 1200 * time.Millisecond, 3 * time.Second, []string{"duplicate-offset"}},
+		{"negative-metadata", "[offset:-100]\n[00:01]a", common.Options{}, time.Second, 59_999*time.Second + 999*time.Millisecond, nil},
+		{"positive-metadata", "[offset:+100]\n[00:01]a", common.Options{Duration: 3 * time.Second}, time.Second, 3 * time.Second, nil},
+		{"duplicate-metadata", "[offset:100]\n[offset:200]\n[00:01]a", common.Options{Duration: 3 * time.Second}, time.Second, 3 * time.Second, nil},
 		{"duration", "[00:01]last", common.Options{Duration: 6 * time.Second}, time.Second, 6 * time.Second, nil},
-		{"fallback", "[00:01]last", common.Options{FinalLineDuration: 2 * time.Second}, time.Second, 3 * time.Second, []string{"inferred-end"}},
+		{"amll-plain-sentinel", "[00:01]last", common.Options{}, time.Second, 59_999*time.Second + 999*time.Millisecond, nil},
 		{"terminal", "[00:01]<00:01>last<00:03>", common.Options{Strict: true}, time.Second, 3 * time.Second, nil},
+		{"word-sync-final-one-second", "[00:01]<00:01>A<00:01.5>B", common.Options{}, time.Second, 2500 * time.Millisecond, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := Parse(context.Background(), []byte(tc.input), tc.options)
@@ -176,11 +190,108 @@ func TestOffsetAndFinalLine(t *testing.T) {
 	}
 }
 
+func TestAMLLDefaultSPLValidSemantics(t *testing.T) {
+	input := strings.Join([]string{
+		"[TI:  Title  ]",
+		"[ti:Title]", // case-normalized duplicate metadata value
+		"[Ar: Author ]",
+		"[empty:]",      // empty metadata values are skipped
+		"[offset:-500]", // metadata only; AMLL does not shift parsed LRC time
+		"# comment",
+		"// comment",
+		"[00:01][00:02][00:02]Main", // duplicate start times produce unique rows
+		"Implicit translation",      // attach to the whole previous row group
+		"[00:01]Timed translation",  // same-start translation targets first match
+		"[00:03]",                   // explicit end applies to the group's last row
+		"[00:04](echo)",             // full-line parentheses signal background vocal
+		"[00:05]<00:05.123456>first[00:06:654321]second[00:07]",
+		"[00:08]closing",
+		"[00:10]<00:10>first<00:10.5>last", // final word-sync adds one second
+	}, "\n")
+	result, err := Parse(context.Background(), []byte(input), common.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Document.Len() != 6 {
+		t.Fatalf("lines=%d, want 6: %+v", result.Document.Len(), result.Diagnostics)
+	}
+	first, second := result.Document.Line(0), result.Document.Line(1)
+	if first.Start() != time.Second || first.Text() != "Main" || first.Translation() != "Implicit translation\nTimed translation" {
+		t.Fatalf("first repeated-start row: text=%q translation=%q start=%v", first.Text(), first.Translation(), first.Start())
+	}
+	if second.Start() != 2*time.Second || second.End() != 3*time.Second || second.Translation() != "Implicit translation" {
+		t.Fatalf("second repeated-start row lost group translation/end: %+v", second)
+	}
+	background := result.Document.Line(2)
+	if !background.Background() || background.Text() != "echo" || background.Word(0).Text != "echo" {
+		t.Fatalf("full-line parentheses were not normalized as background vocal: %+v", background)
+	}
+	wordSync := result.Document.Line(3)
+	if wordSync.Text() != "firstsecond" || wordSync.WordCount() != 2 || wordSync.Word(0).Start != 5*time.Second+123*time.Millisecond || wordSync.Word(0).End != 6*time.Second+654*time.Millisecond || wordSync.Word(1).End != 7*time.Second {
+		t.Fatalf("square-bracket/precision word tokens diverged: %+v", wordSync)
+	}
+	plainFinal := result.Document.Line(4)
+	if plainFinal.End() != 10*time.Second {
+		t.Fatalf("next row should close preceding plain line, got [%v,%v)", plainFinal.Start(), plainFinal.End())
+	}
+	wordFinal := result.Document.Line(5)
+	if wordFinal.End() != 11*time.Second+500*time.Millisecond || wordFinal.Word(1).End != wordFinal.End() {
+		t.Fatalf("final word-synced line should end one second after its last word begins: [%v,%v)", wordFinal.Start(), wordFinal.End())
+	}
+	if result.Document.PropertyCount() != 3 {
+		t.Fatalf("metadata key/value normalization or dedup failed: count=%d", result.Document.PropertyCount())
+	}
+	wantMetadata := []lyric.Property{{Name: "ti", Value: "Title"}, {Name: "ar", Value: "Author"}, {Name: "offset", Value: "-500"}}
+	for i, want := range wantMetadata {
+		if got := result.Document.Property(i); got != want {
+			t.Errorf("metadata[%d]=%+v, want %+v", i, got, want)
+		}
+	}
+}
+
+func TestAMLLTimestampWidthsAndFractionTruncation(t *testing.T) {
+	result, err := Parse(context.Background(), []byte("[0:1.123456]short\n[000:02]next\n[0:60]sixty"), common.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []time.Duration{time.Second + 123*time.Millisecond, 2 * time.Second, 60 * time.Second}
+	if result.Document.Len() != len(want) {
+		t.Fatalf("AMLL minute/second widths or fractional truncation differ: %+v", result)
+	}
+	for i, at := range want {
+		if result.Document.Line(i).Start() != at {
+			t.Errorf("line %d start=%v; want %v", i, result.Document.Line(i).Start(), at)
+		}
+	}
+}
+
+func TestAMLLScannerResumesAfterMalformedBracketText(t *testing.T) {
+	result, err := Parse(context.Background(), []byte("[00:01]A<bad<00:02>B<00:03>"), common.Options{Duration: 4 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := result.Document.Line(0)
+	if line.Text() != "A<badB" || line.WordCount() != 2 || line.Word(0).Text != "A<bad" || line.Word(0).Start != time.Second || line.Word(0).End != 2*time.Second || line.Word(1).Text != "B" || line.Word(1).Start != 2*time.Second || line.Word(1).End != 3*time.Second {
+		t.Fatalf("scanner did not resume at the later regex-style timestamp: line=%q words=%+v", line.Text(), []lyric.Word{line.Word(0), line.Word(1)})
+	}
+}
+
+func TestAMLLFinalInferenceAppliesOnlyToLastEqualStartLine(t *testing.T) {
+	result, err := Parse(context.Background(), []byte("[00:01]plain\n[00:01](background)"), common.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Document.Len() != 2 {
+		t.Fatalf("equal-start group produced %d lines", result.Document.Len())
+	}
+	plain, background := result.Document.Line(0), result.Document.Line(1)
+	if plain.End() != time.Second || background.End() != 59_999*time.Second+999*time.Millisecond || !background.Background() {
+		t.Fatalf("last-line sentinel leaked across equal starts: plain=[%v,%v), background=[%v,%v) bg=%v", plain.Start(), plain.End(), background.Start(), background.End(), background.Background())
+	}
+}
+
 func TestErrorsAndStrictMode(t *testing.T) {
 	for _, input := range []string{
-		"[offset:9223372036854775807]\n[00:01]x",
-		"[offset:-1001]\n[00:01]x",
-		"[offset:10]\n[153722867:16.854]x",
 		"[00:00]<00:00>x<00:00>",
 		"[00:02]<00:01>x<00:03>",
 		"[00:01]<00:03>x<00:02>",
@@ -188,13 +299,13 @@ func TestErrorsAndStrictMode(t *testing.T) {
 		"[00:01]<00:01>x<00:02><00:01.5>y<00:03>",
 	} {
 		result, err := Parse(context.Background(), []byte(input), common.Options{Duration: 4 * time.Second})
-		if err == nil || result.Document != nil {
-			t.Fatalf("expected error for %q, got %#v, %v", input, result, err)
+		if err != nil || result.Document == nil {
+			t.Fatalf("source word timing was rejected for %q: %#v, %v", input, result, err)
 		}
 	}
 	for _, input := range []string{
-		"untimed", "[00:60]x", "[00:01.1234]x", "[999999999999999999:00]x", "[00:1]x", "[00:01]x",
-		"[00:02]second\n[00:01]first", "[00:00]<00:00>A<00:00>B<00:01>", "[00:01]<oops>x",
+		"untimed", "[999999999999999999:00]x",
+		"[00:02]second\n[00:01]first", "[00:01]<oops>x",
 	} {
 		result, err := Parse(context.Background(), []byte(input), common.Options{Strict: true})
 		if err == nil || result.Document != nil {
@@ -208,6 +319,21 @@ func TestErrorsAndStrictMode(t *testing.T) {
 	}
 }
 
+func TestGeneratedZeroTimeSpaceAndReversedLineRetainSource(t *testing.T) {
+	input := "[00:03]A[00:03.5] [00:00.000]B[00:04]\n[00:05]C[00:00]"
+	result, err := Parse(context.Background(), []byte(input), common.Options{Strict: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, reversed := result.Document.Line(0), result.Document.Line(1)
+	if first.Text() != "A B" || first.WordCount() != 3 || first.Word(0).Start != 3*time.Second || first.Word(0).End != 3500*time.Millisecond || first.Word(1).Text != " " || first.Word(1).Start != 3500*time.Millisecond || first.Word(1).End != 0 || first.Word(2).Text != "B" || first.Word(2).Start != 0 || first.Word(2).End != 4*time.Second {
+		t.Fatalf("generated whitespace or its source endpoints changed: %+v", []lyric.Word{first.Word(0), first.Word(1), first.Word(2)})
+	}
+	if reversed.Start() != 5*time.Second || reversed.End() != 0 || reversed.Word(0).Start != 5*time.Second || reversed.Word(0).End != 0 {
+		t.Fatalf("reversed source line changed: start=%v end=%v word=%+v", reversed.Start(), reversed.End(), reversed.Word(0))
+	}
+}
+
 func TestLimitsAndCancellation(t *testing.T) {
 	for _, tc := range []struct {
 		name, input string
@@ -217,7 +343,6 @@ func TestLimitsAndCancellation(t *testing.T) {
 		{"physical-lines", "[ti:x]\n[00:01]x", common.Limits{MaxLines: 1}},
 		{"repeated-lines", "[00:01][00:02]x", common.Limits{MaxLines: 1}},
 		{"words", "[00:00]<00:00>a<00:01>b<00:02>", common.Limits{MaxWords: 1}},
-		{"repeated-words", "[00:00][00:03]<00:00>a<00:01>", common.Limits{MaxWords: 1}},
 		{"diagnostics", "bad\nbad", common.Limits{MaxDiagnostics: 1}},
 		{"negative", "", common.Limits{MaxDepth: -1}},
 	} {
@@ -262,12 +387,12 @@ func (c *cancelAfterChecks) Err() error {
 }
 
 func TestEmptyEnhancedMarkersDoNotExtendPreviousWord(t *testing.T) {
-	result, err := Parse(context.Background(), []byte("[00:01]<00:01>x<00:02><00:03>"), common.Options{})
+	result, err := Parse(context.Background(), []byte("[00:01]<00:01.5>x<00:02><00:03>"), common.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	line := result.Document.Line(0)
-	if line.End() != 3*time.Second || line.WordCount() != 1 || line.Word(0).End != 2*time.Second {
+	if line.End() != 3*time.Second || line.WordCount() != 1 || line.Word(0).Start != 1500*time.Millisecond || line.Word(0).End != 2*time.Second {
 		t.Fatalf("an empty timing marker extended a completed word: %#v", line.Word(0))
 	}
 }
@@ -290,7 +415,7 @@ func FuzzParse(f *testing.F) {
 		ids := make(map[string]bool)
 		for i := 0; i < result.Document.Len(); i++ {
 			line := result.Document.Line(i)
-			if line.ID() == "" || ids[line.ID()] || line.Start() < 0 || line.End() <= line.Start() {
+			if line.ID() == "" || ids[line.ID()] || line.Start() < 0 || line.End() < 0 {
 				t.Fatal("document violated line invariants")
 			}
 			ids[line.ID()] = true

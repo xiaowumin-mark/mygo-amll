@@ -1,7 +1,8 @@
-// Package yrc parses a plaintext subset of YRC. Lines use [start,duration]
-// followed by (start,duration,flags)text segments. All times are absolute integer
-// milliseconds; word times are not relative to their line. Timing parentheses
-// are reserved syntax. Empty payloads are valid; nonempty untimed text is not.
+// Package yrc parses bounded plaintext YRC using AMLL's lazy token grammar.
+// Lines use [start,duration], followed by (start,duration,0)text segments. All
+// times are absolute integer milliseconds. Only literal flags 0 form timing
+// tokens; other parentheses remain text between valid markers. Empty payloads
+// are skipped; a nonempty unmatched payload produces an empty-word line.
 //
 // UTF-8 (optionally BOM-prefixed), LF, CRLF and CR are accepted. Metadata tags
 // such as [ti:value], [ar:value] and [offset:signed-ms] are retained as document
@@ -11,13 +12,15 @@
 //
 // Lines are stably sorted with a warning; equal starts and overlaps are retained.
 // Source line identities use yrc:<one-based-source-line> and survive sorting.
-// Zero-duration word timing is removed with a warning while preserving line text.
-// Other invalid intervals, malformed tokens and time overflows are fatal. Nonzero
-// word flags warn because the model does not represent them. Strict mode turns
-// warnings into errors. This subset does not interpret AMLL's parenthesized
-// background-vocal convention; fullwidth parentheses remain ordinary lyric text.
-// Duet, translation and romanization are not inferred. JSON envelopes and other
-// service containers are unsupported. Parsing performs no I/O.
+// Source-order point words, decreasing starts and words outside their line are
+// retained through the explicit source-timing document policy. Generated (0,0)
+// spaces keep their text and endpoints. Point lines are retained as empty active
+// intervals. Time overflow, negative numeric fields and input budgets remain
+// errors. Strict turns diagnostics into errors, not supported source timing.
+// A complete ASCII/fullwidth parenthesis pair around the first/last word marks
+// a background line and is removed. Duet, translation and romanization are not
+// inferred. JSON envelopes and other service containers are unsupported.
+// Parsing performs no I/O.
 package yrc
 
 import (

@@ -66,30 +66,33 @@ func Parse(ctx context.Context, data []byte, options common.Options, prefixTimin
 				begin++
 			}
 		}
-		if strings.TrimSpace(raw) == "" {
+		trimmed := strings.TrimLeftFunc(raw, isQRCWhitespace)
+		lineColumnOffset := len(raw) - len(trimmed)
+		raw = strings.TrimRightFunc(trimmed, isQRCWhitespace)
+		if raw == "" {
 			continue
 		}
 		if raw[0] != '[' {
-			return result, formatutil.Error(sourceLine, 1, "unsupported", "expected plaintext [start,duration] lyrics; containers are unsupported")
+			return result, formatutil.Error(sourceLine, lineColumnOffset+1, "unsupported", "expected plaintext [start,duration] lyrics; containers are unsupported")
 		}
 		close := strings.IndexByte(raw, ']')
 		if close < 0 {
-			return result, formatutil.Error(sourceLine, 1, "syntax", "unclosed line header")
+			return result, formatutil.Error(sourceLine, lineColumnOffset+1, "syntax", "unclosed line header")
 		}
 		header := raw[1:close]
 		if name, value, ok := strings.Cut(header, ":"); ok {
 			if !metadataName(name) || strings.TrimSpace(raw[close+1:]) != "" {
-				return result, formatutil.Error(sourceLine, 1, "syntax", "invalid metadata tag")
+				return result, formatutil.Error(sourceLine, lineColumnOffset+1, "syntax", "invalid metadata tag")
 			}
 			name = strings.ToLower(name)
 			metadata = append(metadata, lyric.Property{Name: name, Value: value})
 			if name == "offset" {
 				parsed, err := milliseconds(value, true)
 				if err != nil {
-					return result, formatutil.Error(sourceLine, 2+len(name)+1, "time", "invalid millisecond offset")
+					return result, formatutil.Error(sourceLine, lineColumnOffset+2+len(name)+1, "time", "invalid millisecond offset")
 				}
 				if seenOffset {
-					if err := p.Warn(sourceLine, 1, "duplicate-offset", "last offset tag overrides earlier offsets"); err != nil {
+					if err := p.Warn(sourceLine, lineColumnOffset+1, "duplicate-offset", "last offset tag overrides earlier offsets"); err != nil {
 						return result, err
 					}
 				}
@@ -99,11 +102,18 @@ func Parse(ctx context.Context, data []byte, options common.Options, prefixTimin
 		}
 		start, duration, _, err := timing(header, false)
 		if err != nil {
-			return result, formatutil.Error(sourceLine, 2, "time", "line header requires nonnegative millisecond start,duration")
+			return result, formatutil.Error(sourceLine, lineColumnOffset+2, "time", "line header requires nonnegative millisecond start,duration")
 		}
 		lineEnd, err := formatutil.Shift(start, duration)
 		if err != nil {
-			return result, formatutil.Error(sourceLine, 2, "time", "line end overflows time.Duration")
+			return result, formatutil.Error(sourceLine, lineColumnOffset+2, "time", "line end overflows time.Duration")
+		}
+		payload := raw[close+1:]
+		trimmed = strings.TrimLeftFunc(payload, isQRCWhitespace)
+		payloadColumnOffset := len(payload) - len(trimmed)
+		payload = strings.TrimRightFunc(trimmed, isQRCWhitespace)
+		if payload == "" {
+			continue
 		}
 		if err := p.AddLine(); err != nil {
 			return result, err
@@ -112,63 +122,204 @@ func Parse(ctx context.Context, data []byte, options common.Options, prefixTimin
 		if prefixTiming {
 			kind = "yrc"
 		}
-		line := formatutil.Line{Line: lyric.Line{ID: kind + ":" + strconv.Itoa(sourceLine), Start: start, End: lineEnd}, SourceLine: sourceLine}
-		payload := raw[close+1:]
+		// Generated lyrics use source-order (0,0) segments for spaces. Retain
+		// those authored endpoints and text even when they precede nearby words.
+		line := formatutil.Line{Line: lyric.Line{ID: kind + ":" + strconv.Itoa(sourceLine), Start: start, End: lineEnd}, SourceLine: sourceLine, PreserveTiming: true}
 		var plain strings.Builder
-		for position := 0; position < len(payload); {
-			if err := p.Check(); err != nil {
+		if prefixTiming {
+			if err := parseYRCWords(p, payload, &line, &plain, sourceLine, lineColumnOffset+payloadColumnOffset+close+2); err != nil {
 				return result, err
 			}
-			wordStart := position
-			open := position
-			if !prefixTiming {
-				if next := strings.IndexByte(payload[position:], '('); next >= 0 {
-					open += next
-				} else {
-					return result, formatutil.Error(sourceLine, close+2+position, "syntax", "QRC word text requires a trailing (start,duration) timing")
-				}
-			}
-			if payload[open] != '(' {
-				return result, formatutil.Error(sourceLine, close+2+open, "syntax", "YRC word requires a leading (start,duration,flags) timing")
-			}
-			wordClose := strings.IndexByte(payload[open+1:], ')')
-			if wordClose < 0 {
-				return result, formatutil.Error(sourceLine, close+2+open, "syntax", "unclosed word timing")
-			}
-			wordClose += open + 1
-			start, duration, flags, err := timing(payload[open+1:wordClose], prefixTiming)
-			if err != nil {
-				return result, formatutil.Error(sourceLine, close+3+open, "time", "invalid millisecond word timing")
-			}
-			end, err := formatutil.Shift(start, duration)
-			if err != nil {
-				return result, formatutil.Error(sourceLine, close+3+open, "time", "word end overflows time.Duration")
-			}
-			if prefixTiming && flags != 0 {
-				if err := p.Warn(sourceLine, close+3+open, "word-flags", "nonzero YRC word flags are not represented"); err != nil {
+		} else {
+			for position := 0; position < len(payload); {
+				if err := p.Check(); err != nil {
 					return result, err
 				}
-			}
-			wordText := payload[wordStart:open]
-			position = wordClose + 1
-			if prefixTiming {
-				textEnd := len(payload)
-				if next := strings.IndexByte(payload[position:], '('); next >= 0 {
-					textEnd = position + next
+				wordStart := position
+				open := position
+				wordClose := -1
+				var found bool
+				open, wordClose, found = nextQRCTiming(payload, position)
+				if !found {
+					// AMLL's global lazy regexp stops when no complete numeric token
+					// remains. Any unmatched tail after the last timed word is ignored.
+					break
 				}
-				wordText = payload[position:textEnd]
-				position = textEnd
+				start, duration, _, err := timing(payload[open+1:wordClose], false)
+				if err != nil {
+					return result, formatutil.Error(sourceLine, lineColumnOffset+payloadColumnOffset+close+3+open, "time", "invalid millisecond word timing")
+				}
+				end, err := formatutil.Shift(start, duration)
+				if err != nil {
+					return result, formatutil.Error(sourceLine, lineColumnOffset+payloadColumnOffset+close+3+open, "time", "word end overflows time.Duration")
+				}
+				wordText := payload[wordStart:open]
+				position = wordClose + 1
+				if err := p.AddWords(1); err != nil {
+					return result, err
+				}
+				line.Words = append(line.Words, lyric.Word{Text: wordText, Start: start, End: end})
+				plain.WriteString(wordText)
 			}
-			if err := p.AddWords(1); err != nil {
-				return result, err
+		}
+		if len(line.Words) > 0 && timedBackground(line.Words) {
+			line.Background = true
+			line.Words[0].Text = strings.TrimPrefix(strings.TrimPrefix(line.Words[0].Text, "("), "（")
+			last := len(line.Words) - 1
+			line.Words[last].Text = strings.TrimSuffix(strings.TrimSuffix(line.Words[last].Text, ")"), "）")
+			plain.Reset()
+			for _, word := range line.Words {
+				plain.WriteString(word.Text)
 			}
-			line.Words = append(line.Words, lyric.Word{Text: wordText, Start: start, End: end})
-			plain.WriteString(wordText)
 		}
 		line.Text = plain.String()
 		lines = append(lines, line)
 	}
 	return p.Finish(lines, metadata, offset)
+}
+
+// nextQRCTiming searches like AMLL's global QRC regexp: ordinary or malformed
+// parenthesized fragments remain lyric text when a later numeric timing token
+// follows them. The caller retains all bytes before the returned token as the
+// timed word's text. Digit-only overflowing tokens are still matched here and
+// rejected by timing, preserving this parser's overflow protection.
+func nextQRCTiming(payload string, from int) (open, close int, found bool) {
+	for search := from; search < len(payload); {
+		next := strings.IndexByte(payload[search:], '(')
+		if next < 0 {
+			return 0, 0, false
+		}
+		open = search + next
+		end := strings.IndexByte(payload[open+1:], ')')
+		if end < 0 {
+			search = open + 1
+			continue
+		}
+		close = open + 1 + end
+		if qrcNumericTiming(payload[open+1 : close]) {
+			return open, close, true
+		}
+		search = open + 1
+	}
+	return 0, 0, false
+}
+
+// parseYRCWords follows AMLL's anchored lazy YRC expression. Each search skips
+// arbitrary lyric text until the next complete (start,duration,0) marker. Text
+// between markers belongs to the preceding marker; text before the first marker
+// is ignored, and an untimed tail extends the final word.
+func parseYRCWords(p *formatutil.Parser, payload string, line *formatutil.Line, plain *strings.Builder, sourceLine, baseColumn int) error {
+	type pendingWord struct {
+		start time.Duration
+		end   time.Duration
+	}
+	var pending *pendingWord
+	textStart := 0
+	appendWord := func(text string, word pendingWord) error {
+		if text == "" {
+			return nil
+		}
+		if err := p.AddWords(1); err != nil {
+			return err
+		}
+		line.Words = append(line.Words, lyric.Word{Text: text, Start: word.start, End: word.end})
+		plain.WriteString(text)
+		return nil
+	}
+
+	for position := 0; position < len(payload); {
+		if err := p.Check(); err != nil {
+			return err
+		}
+		open, close, found := nextYRCTiming(payload, position)
+		if !found {
+			if pending != nil {
+				return appendWord(payload[textStart:], *pending)
+			}
+			return nil
+		}
+		if pending != nil {
+			if err := appendWord(payload[textStart:open], *pending); err != nil {
+				return err
+			}
+		}
+		start, duration, _, err := timing(payload[open+1:close], true)
+		if err != nil {
+			return formatutil.Error(sourceLine, baseColumn+open+1, "time", "invalid millisecond word timing")
+		}
+		end, err := formatutil.Shift(start, duration)
+		if err != nil {
+			return formatutil.Error(sourceLine, baseColumn+open+1, "time", "word end overflows time.Duration")
+		}
+		pending = &pendingWord{start: start, end: end}
+		textStart = close + 1
+		position = textStart
+	}
+	if pending != nil {
+		return appendWord(payload[textStart:], *pending)
+	}
+	return nil
+}
+
+// nextYRCTiming matches only literal flags 0, as AMLL's YRC expression does.
+// Other parenthesized fragments remain part of the lazily captured lyric text.
+func nextYRCTiming(payload string, from int) (open, close int, found bool) {
+	for search := from; search < len(payload); {
+		next := strings.IndexByte(payload[search:], '(')
+		if next < 0 {
+			return 0, 0, false
+		}
+		open = search + next
+		index := open + 1
+		startBegin := index
+		for index < len(payload) && payload[index] >= '0' && payload[index] <= '9' {
+			index++
+		}
+		if index == startBegin || index >= len(payload) || payload[index] != ',' {
+			search = open + 1
+			continue
+		}
+		index++
+		durationBegin := index
+		for index < len(payload) && payload[index] >= '0' && payload[index] <= '9' {
+			index++
+		}
+		if index == durationBegin || index+2 >= len(payload) || payload[index] != ',' || payload[index+1] != '0' || payload[index+2] != ')' {
+			search = open + 1
+			continue
+		}
+		return open, index + 2, true
+	}
+	return 0, 0, false
+}
+
+func qrcNumericTiming(value string) bool {
+	first, rest, ok := strings.Cut(value, ",")
+	if !ok || first == "" || rest == "" || strings.Contains(rest, ",") {
+		return false
+	}
+	for _, field := range []string{first, rest} {
+		for _, digit := range field {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func timedBackground(words []lyric.Word) bool {
+	first, last := words[0].Text, words[len(words)-1].Text
+	return (strings.HasPrefix(first, "(") || strings.HasPrefix(first, "（")) &&
+		(strings.HasSuffix(last, ")") || strings.HasSuffix(last, "）"))
+}
+
+// isQRCWhitespace follows JavaScript String.trim's edge set. In particular,
+// it includes BOM and excludes U+0085, unlike unicode.IsSpace.
+func isQRCWhitespace(r rune) bool {
+	return r >= '\t' && r <= '\r' || r == ' ' || r == '\u00a0' || r == '\u1680' ||
+		r >= '\u2000' && r <= '\u200a' || r == '\u2028' || r == '\u2029' ||
+		r == '\u202f' || r == '\u205f' || r == '\u3000' || r == '\ufeff'
 }
 
 func metadataName(value string) bool {

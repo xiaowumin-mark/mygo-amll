@@ -51,17 +51,12 @@ func TestMalformedAndUnsupportedNeverDegrade(t *testing.T) {
 	for _, parser := range parsers {
 		t.Run(parser.name, func(t *testing.T) {
 			inputs := []string{
-				"[0,1000]untimed text", "[00:01.00]not LRC", "<QrcInfos/>", "{\"content\":\"lyrics\"}",
-				"[0,1000", "[0,1000,0]", "[-1,1000]", "[+1,1000]", "[0,-1]", "[0,0]",
-				"[ti:value]trailing text", "[0,1000](invalid)", "[offset:bad]", "[offset:9223372036854775807]",
+				"[00:01.00]not LRC", "<QrcInfos/>", "{\"content\":\"lyrics\"}",
+				"[0,1000", "[0,1000,0]", "[-1,1000]", "[+1,1000]", "[0,-1]",
+				"[ti:value]trailing text", "[offset:bad]", "[offset:9223372036854775807]",
 				parser.line("9223372036854,1000", "overflow"), parser.line("9223372036855,1", "overflow"),
 				"[offset:-1]\n" + parser.line("0,1000", "negative offset"),
 				"[offset:9223372036854]\n" + parser.line("0,1000", "offset overflow"),
-			}
-			if parser.name == "yrc" {
-				inputs = append(inputs, "[0,1000](0,1000)missing flags", "[0,1000](0,1000,0", "[0,1000](0,1000,0,0)x", "[0,1000](0,1001,0)outside")
-			} else {
-				inputs = append(inputs, "[0,1000]x(0,1000,0)", "[0,1000]x(0,1000", "[0,1000]x(0,1000)tail", "[0,1000]x(0,1001)")
 			}
 			for _, input := range inputs {
 				for _, strict := range []bool{false, true} {
@@ -76,6 +71,79 @@ func TestMalformedAndUnsupportedNeverDegrade(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestQRCMatchesAMLLRegexAndBackgroundWords(t *testing.T) {
+	input := " \t[0,20]  A(x)B(0,10) C(10,10) ignored trailing words \ufeff "
+	result, err := qrc.Parse(context.Background(), []byte(input), common.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Document.Len() != 1 {
+		t.Fatalf("document lines=%d, want 1", result.Document.Len())
+	}
+	line := result.Document.Line(0)
+	if line.Text() != "A(x)B C" || line.WordCount() != 2 || line.Word(0).Text != "A(x)B" || line.Word(1).Text != " C" {
+		t.Fatalf("regex-compatible words: text=%q count=%d words=%q/%q", line.Text(), line.WordCount(), line.Word(0).Text, line.Word(1).Text)
+	}
+
+	background, err := qrc.Parse(context.Background(), []byte("[0,20]（lead(0,10) tail）(10,10)"), common.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bg := background.Document.Line(0)
+	if !bg.Background() || bg.Text() != "lead tail" || bg.Word(0).Text != "lead" || bg.Word(1).Text != " tail" {
+		t.Fatalf("background wrapper: background=%v text=%q words=%q/%q", bg.Background(), bg.Text(), bg.Word(0).Text, bg.Word(1).Text)
+	}
+
+	mixed, err := qrc.Parse(context.Background(), []byte("[0,20](left(0,10) right)(10,10)"), common.Options{})
+	if err != nil || !mixed.Document.Line(0).Background() || mixed.Document.Line(0).Text() != "left right" {
+		t.Fatalf("mixed ordinary/fullwidth wrappers should match AMLL: result=%+v err=%v", mixed, err)
+	}
+}
+
+func TestQRCFiltersEmptyAndUntimedTailLikeAMLL(t *testing.T) {
+	input := "[0,10] \t\n[10,20]plain text\n[30,20]x(30,10) untimed trailing text (also ignored)"
+	result, err := qrc.Parse(context.Background(), []byte(input), common.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Document.Len() != 2 {
+		t.Fatalf("document lines=%d, want 2", result.Document.Len())
+	}
+	empty := result.Document.Line(0)
+	if empty.Start() != 10*time.Millisecond || empty.Text() != "" || empty.WordCount() != 0 {
+		t.Fatalf("nonempty untimed line should preserve AMLL's empty line result: start=%v text=%q words=%d", empty.Start(), empty.Text(), empty.WordCount())
+	}
+	word := result.Document.Line(1)
+	if word.Start() != 30*time.Millisecond || word.Text() != "x" || word.WordCount() != 1 {
+		t.Fatalf("trailing untimed text was not ignored: start=%v text=%q words=%d", word.Start(), word.Text(), word.WordCount())
+	}
+}
+
+func TestQRCOrdinaryParenthesesBeforeTimingAndMalformedOnlyPayloads(t *testing.T) {
+	input := "[0,20]A(x)B(0,10) C(10,10)"
+	result, err := qrc.Parse(context.Background(), []byte(input), common.Options{})
+	if err != nil || result.Document.Line(0).Text() != "A(x)B C" {
+		t.Fatalf("ordinary parentheses before a later valid marker: result=%+v err=%v", result, err)
+	}
+	for _, input := range []string{"[0,20]x(0,10", "[0,20](invalid)"} {
+		result, err := qrc.Parse(context.Background(), []byte(input), common.Options{})
+		if err != nil || result.Document.Len() != 1 || result.Document.Line(0).WordCount() != 0 || result.Document.Line(0).Text() != "" {
+			t.Fatalf("malformed-only payload should produce AMLL's empty-word line: %q result=%+v err=%v", input, result, err)
+		}
+	}
+}
+
+func TestYRCBackgroundParentheses(t *testing.T) {
+	result, err := yrc.Parse(context.Background(), []byte("[100,100](100,50,0)（echo(150,50,0)）"), common.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := result.Document.Line(0)
+	if !line.Background() || line.Text() != "echo" {
+		t.Fatalf("background wrappers: background=%v text=%q", line.Background(), line.Text())
 	}
 }
 
@@ -132,16 +200,33 @@ func TestLimitsAndCanceledInput(t *testing.T) {
 	}
 }
 
-func TestYRCFlagsAndDiagnosticLimit(t *testing.T) {
-	input := "[0,1000](0,400,1)a(400,600,2)b"
+func TestYRCLazyFlagsZeroMatchingAndTrim(t *testing.T) {
+	input := " \t[0,100] (0,40,0)a(bad)(40,20,1)ignored(40,60,0)b \t"
 	result, err := yrc.Parse(context.Background(), []byte(input), common.Options{})
-	if err != nil || len(result.Diagnostics) != 2 {
-		t.Fatalf("flags: %+v, %v", result, err)
+	if err != nil || len(result.Diagnostics) != 0 {
+		t.Fatalf("regex-compatible YRC input: %+v, %v", result, err)
 	}
-	for _, options := range []common.Options{{Strict: true}, {Limits: common.Limits{MaxDiagnostics: 1}}} {
-		result, err := yrc.Parse(context.Background(), []byte(input), options)
-		if err == nil || result.Document != nil {
-			t.Fatalf("warning policy ignored: %+v", options)
+	line := result.Document.Line(0)
+	if line.Text() != "a(bad)(40,20,1)ignoredb" || line.WordCount() != 2 || line.Word(0).Text != "a(bad)(40,20,1)ignored" || line.Word(1).Text != "b" {
+		t.Fatalf("lazy flags-0 token matching: text=%q words=%d first=%q second=%q", line.Text(), line.WordCount(), line.Word(0).Text, line.Word(1).Text)
+	}
+
+	noSupportedFlags, err := yrc.Parse(context.Background(), []byte("[0,100](0,100,1)unmatched"), common.Options{})
+	if err != nil || noSupportedFlags.Document.Len() != 1 || noSupportedFlags.Document.Line(0).WordCount() != 0 || len(noSupportedFlags.Diagnostics) != 0 {
+		t.Fatalf("nonzero YRC flags should not match AMLL's token regex: %+v, %v", noSupportedFlags, err)
+	}
+
+	for _, input := range []string{"[0,100] \t", " \t[0,100](0,100,0)word \t"} {
+		trimmed, err := yrc.Parse(context.Background(), []byte(input), common.Options{})
+		if err != nil {
+			t.Fatalf("trimmed YRC %q: %v", input, err)
+		}
+		if input == "[0,100] \t" {
+			if trimmed.Document.Len() != 0 {
+				t.Fatalf("empty YRC payload should be skipped, got %d lines", trimmed.Document.Len())
+			}
+		} else if trimmed.Document.Len() != 1 || trimmed.Document.Line(0).Text() != "word" {
+			t.Fatalf("whole-line and payload trim did not match AMLL: %+v", trimmed.Document)
 		}
 	}
 }
@@ -158,14 +243,34 @@ func TestZeroAtOriginAndWordOrdering(t *testing.T) {
 				reversed = "[0,1000]b(500,500)a(0,500)"
 			}
 			result, err := parser.parse(context.Background(), []byte(zero), common.Options{})
-			if err != nil || result.Document.Line(0).WordCount() != 1 || result.Document.Line(0).Text() != "zerofull" || len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "zero-word" {
+			if err != nil || result.Document.Line(0).WordCount() != 2 || result.Document.Line(0).Text() != "zerofull" || len(result.Diagnostics) != 0 || result.Document.Line(0).Word(0).Start != 0 || result.Document.Line(0).Word(0).End != 0 {
 				t.Fatalf("zero at origin: %+v, %v", result, err)
 			}
-			if _, err := parser.parse(context.Background(), []byte(zero), common.Options{Strict: true}); err == nil {
-				t.Fatal("strict mode accepted zero-duration timing")
+			if _, err := parser.parse(context.Background(), []byte(zero), common.Options{Strict: true}); err != nil {
+				t.Fatalf("source point timing is supported in strict mode: %v", err)
 			}
-			if _, err := parser.parse(context.Background(), []byte(reversed), common.Options{}); err == nil {
-				t.Fatal("unordered word times silently sorted")
+			result, err = parser.parse(context.Background(), []byte(reversed), common.Options{})
+			if err != nil || result.Document.Line(0).WordCount() != 2 || result.Document.Line(0).Word(0).Text != "b" || result.Document.Line(0).Word(0).Start != 500*time.Millisecond || result.Document.Line(0).Word(1).Text != "a" || result.Document.Line(0).Word(1).Start != 0 {
+				t.Fatalf("source-order words were sorted, dropped or rejected: %+v %v", result, err)
+			}
+		})
+	}
+}
+
+func TestGeneratedZeroTimedSpacesRemainTextAndSourceTiming(t *testing.T) {
+	for _, parser := range parsers {
+		t.Run(parser.name, func(t *testing.T) {
+			input := "[3000,1000](3000,500,0)A(0,0,0) (3500,500,0)B"
+			if parser.name == "qrc" {
+				input = "[3000,1000]A(3000,500) (0,0)B(3500,500)"
+			}
+			result, err := parser.parse(context.Background(), []byte(input), common.Options{Strict: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			line := result.Document.Line(0)
+			if line.Text() != "A B" || line.WordCount() != 3 || line.Word(0).Text != "A" || line.Word(0).Start != 3*time.Second || line.Word(0).End != 3500*time.Millisecond || line.Word(1).Text != " " || line.Word(1).Start != 0 || line.Word(1).End != 0 || line.Word(2).Text != "B" || line.Word(2).Start != 3500*time.Millisecond || line.Word(2).End != 4*time.Second {
+				t.Fatalf("generated zero-timed separator was changed: text=%q words=%d", line.Text(), line.WordCount())
 			}
 		})
 	}
@@ -213,17 +318,14 @@ func TestCancellationDuringParsingAndInputOwnership(t *testing.T) {
 func TestOriginalByteColumnsAfterBOM(t *testing.T) {
 	for _, parser := range parsers {
 		t.Run(parser.name, func(t *testing.T) {
-			malformed := "[0,1000](bad)text"
-			if parser.name == "qrc" {
-				malformed = "[0,1000]中(bad)"
-			}
+			malformed := "[0,-1]text"
 			for _, prefix := range []string{"", "\ufeff", "\ufeff[ti:head]\r\n"} {
 				_, err := parser.parse(context.Background(), []byte(prefix+malformed), common.Options{})
 				var located *common.ParseError
 				if !errors.As(err, &located) {
 					t.Fatalf("missing source diagnostic: %v", err)
 				}
-				wantLine, wantColumn := 1, strings.Index(malformed, "bad")+1
+				wantLine, wantColumn := 1, 2
 				if prefix == "\ufeff" {
 					wantColumn += 3
 				} else if prefix != "" {
@@ -238,9 +340,9 @@ func TestOriginalByteColumnsAfterBOM(t *testing.T) {
 			if !errors.As(err, &located) || located.Column != 4 {
 				t.Fatalf("UTF-8 validation column was adjusted twice: %v", err)
 			}
-			zero := "[0,1000](0,0,0)zero(0,1000,0)word"
+			zero := "[1000,1000](1000,1000,0)later\n[0,1000](0,1000,0)first"
 			if parser.name == "qrc" {
-				zero = "[0,1000]zero(0,0)word(0,1000)"
+				zero = "[1000,1000]later(1000,1000)\n[0,1000]first(0,1000)"
 			}
 			result, err := parser.parse(context.Background(), []byte("\ufeff"+zero), common.Options{})
 			if err != nil || len(result.Diagnostics) != 1 || result.Diagnostics[0].Line != 1 || result.Diagnostics[0].Column != 4 {
