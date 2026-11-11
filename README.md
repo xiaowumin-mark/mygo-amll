@@ -12,7 +12,7 @@
 | `timeline`：活动/保留高亮/焦点、间奏/曲终、双向 seek、手动跟随控制 | 已实现并测试；M2 验收通过 |
 | Native UI 多行自绘、整行换行与逐词裁剪、播放控制 | `examples/native` 技术验证；完整平台验收待补 |
 | 稳定原生组件、精细 cluster 高亮与弹簧滚动 | 已设计，待后续实现 |
-| LRC / 增强 LRC / 明文 YRC / 明文 QRC / TTML 歌词子集解析 | 已实现并测试；[限制与语法](docs/m2-core-formats.md)，M2 验收通过 |
+| LRC / 增强 LRC / 明文 YRC / 明文 QRC / TTML 歌词子集解析 | 已实现并测试；[限制与语法](docs/m2-core-formats.md)、[全库验证](docs/m2-corpus-validation.md) |
 | 静态背景 | 原生示例可选渐变；动态背景/封面转场仍待实现 |
 | CI、贡献入口、Conventional Commits、release PR 自动发版 | 配置已添加，远程启用步骤见下文 |
 

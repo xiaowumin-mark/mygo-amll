@@ -50,6 +50,8 @@ func TestDocumentValidation(t *testing.T) {
 		{name: "word after line", lines: []lyric.Line{{Start: 2, End: 5, Words: []lyric.Word{{Start: 3, End: 6}}}}, want: "word 0"},
 		{name: "zero word", lines: []lyric.Line{{Start: 0, End: 5, Words: []lyric.Word{{Start: 2, End: 2}}}}, want: "word 0"},
 		{name: "unsorted words", lines: []lyric.Line{{Start: 0, End: 5, Words: []lyric.Word{{Start: 2, End: 4}, {Start: 1, End: 3}}}}, want: "word 1"},
+		{name: "negative word", lines: []lyric.Line{{Start: 0, End: 5, Words: []lyric.Word{{Start: -1, End: 3}}}}, want: "word 0"},
+		{name: "reversed word", lines: []lyric.Line{{Start: 0, End: 5, Words: []lyric.Word{{Start: 3, End: 2}}}}, want: "word 0"},
 		{name: "overlapping words", lines: []lyric.Line{{Start: 0, End: 5, Words: []lyric.Word{{Start: 0, End: 4}, {Start: 1, End: 5}}}}},
 	}
 	for _, test := range tests {

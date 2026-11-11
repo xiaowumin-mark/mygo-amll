@@ -2,19 +2,28 @@
 // It performs no I/O. A leading UTF-8 BOM and LF, CRLF, and CR line endings are
 // accepted; other encodings must be converted by the host before parsing.
 //
-// Line timestamps use [minutes:ss], optionally followed by one to three decimal
-// digits. Multiple leading timestamps repeat a line, preserving source order
-// for equal starts. Enhanced <minutes:ss.fraction> timestamps are absolute track
-// positions; a final timestamp with no following text explicitly ends the line.
-// Repeated enhanced lines shift their word times by each line timestamp's delta.
+// It implements AMLL's default SPL/LRC-family semantics. Timestamps accept one
+// to three minute digits, one or two second digits, and an optional one to six
+// digit fraction separated by a period or colon. Fractions are truncated to
+// milliseconds. Enhanced timestamps may use square or angle brackets; they
+// retain absolute track positions in textual order. A terminal timestamp closes
+// the row. Repeated leading tags repeat plain rows; enhanced rows use the first
+// tag for the line and the final leading tag for the first word.
 //
-// Metadata [name:value] is retained in the document. The last [offset:signed-ms]
-// shifts every line and word; duplicate offsets produce a diagnostic. Missing
-// line ends use the next distinct start, or Options.Duration for the last group,
-// or a five-second fallback. Normalization reports inferred ends, reordered
-// lines, and dropped zero-duration word timings. Equal-start lines remain
-// separate; translations, duet roles, and background vocals are not inferred.
-// AMLL-specific metadata extensions and timestamp precision above milliseconds
-// are outside this subset. Enhanced timestamps must be nondecreasing. Strict
-// mode rejects every diagnostic.
+// Metadata names are ASCII letters, normalized to lowercase; repeated values
+// are deduplicated. Offset is metadata only and never shifts times. Same-start
+// later text and adjacent untimed text become translations. A complete pair of
+// ASCII/fullwidth parentheses marks background vocals. Duet is not inferred.
+// Missing ends use the next stable-sorted row, including equal starts. The last
+// plain row ends at AMLL's 999:59.999 sentinel; a final enhanced row ends one
+// second after its final word starts. Options.Duration overrides an inferred
+// final end as a host extension.
+//
+// Source timing is retained explicitly through lyric.DocumentOptions: point,
+// reversed, nonmonotonic and out-of-line words are neither removed nor repaired,
+// including generated (zero-timed) spaces. Nonnegative reversed line endpoints
+// are also retained as data and never describe an active half-open interval.
+// Limits, overflow and invalid UTF-8 remain errors. Sorting and malformed tags
+// produce diagnostics; Strict promotes diagnostics to errors without changing
+// supported source-timing semantics. Parsing performs no resource or media I/O.
 package lrc

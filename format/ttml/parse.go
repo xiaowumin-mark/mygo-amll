@@ -23,16 +23,19 @@ const (
 	ttmNS    = "http://www.w3.org/ns/ttml#metadata"
 	xmlNS    = "http://www.w3.org/XML/1998/namespace"
 	amllNS   = "http://www.example.com/ns/amll"
+	itunesNS = "http://music.apple.com/lyric-ttml-internal"
+	// Older Apple TTML exports used this namespace for the same attributes and
+	// sidecar elements. Normalize it at token ingress so conversion has one path.
+	itunesLegacyNS = "http://itunes.apple.com/lyric-ttml-extensions"
 )
 
 type node struct {
-	name     xml.Name
-	attrs    []xml.Attr
-	parts    []part
-	line     int
-	column   int
-	lang     string
-	preserve bool
+	name   xml.Name
+	attrs  []xml.Attr
+	parts  []part
+	line   int
+	column int
+	lang   string
 }
 
 type part struct {
@@ -44,16 +47,25 @@ type frame struct {
 	name     xml.Name
 	node     *node
 	lang     string
-	preserve bool
 	text     *strings.Builder
 	metaName string
+	sidecar  bool
 }
 
 type documentParser struct {
-	p        *formatutil.Parser
-	lines    []formatutil.Line
-	metadata []lyric.Property
-	bgCount  int
+	p               *formatutil.Parser
+	lines           []formatutil.Line
+	metadata        []lyric.Property
+	sidecars        map[string]*sidecarEntry
+	agentTypes      map[string]string
+	metadataSeen    map[lyric.Property]struct{}
+	metadataIndexed int
+	alignmentWork   int
+	bgCount         int
+	annotationOnly  bool
+	// Apple Word timing is an explicit absolute-time dialect, never a heuristic
+	// applied to ordinary TTML's relative time containers.
+	appleWords bool
 }
 
 // Parse builds an immutable lyric document. The caller must not mutate data
@@ -71,10 +83,10 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 		bomOffset = 3
 	}
 	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
-	if len(bytes.TrimSpace(data)) == 0 {
+	if len(bytes.Trim(data, " \t\r\n")) == 0 {
 		return p.Finish(nil, nil, 0)
 	}
-	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder := newNamespaceDecoder(bytes.NewReader(data), bomOffset)
 	stack := make([]frame, 0, min(p.Options.Limits.MaxDepth, 16))
 	var paragraph *node
 	rootSeen := false
@@ -85,6 +97,7 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 			break
 		}
 		line, column := locator.at(int(decoder.InputOffset()) + bomOffset)
+		tokenOffset := decoder.InputOffset()
 		lastLine, lastColumn = line, column
 		var token xml.Token
 		token, err = decoder.Token()
@@ -98,6 +111,7 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 		}
 		switch t := token.(type) {
 		case xml.StartElement:
+			normalizeITunesStart(&t)
 			if len(stack) >= p.Options.Limits.MaxDepth {
 				err = fmt.Errorf("ttml: line %d column %d: maximum XML depth exceeded", line, column)
 				break
@@ -108,23 +122,45 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 					break
 				}
 				rootSeen = true
+				timing, hasTiming := attribute(t.Attr, itunesNS, "timing")
+				d.appleWords = timing == "Word"
+				if hasTiming && (timing == "Word" || timing == "Line") {
+					d.addMetadataUnique("timingMode", timing)
+				}
+				if language, ok := attribute(t.Attr, xmlNS, "lang"); ok {
+					d.addMetadataUnique("language", language)
+				}
 			}
 			f := frame{name: t.Name}
 			if len(stack) > 0 {
-				f.lang, f.preserve = stack[len(stack)-1].lang, stack[len(stack)-1].preserve
+				f.lang = stack[len(stack)-1].lang
+				f.sidecar = stack[len(stack)-1].sidecar
+			}
+			if f.sidecar {
+				if lang, ok := attribute(t.Attr, xmlNS, "lang"); ok {
+					f.lang = lang
+				}
+				f.node = &node{name: t.Name, attrs: t.Attr, line: line, column: column, lang: f.lang}
+				if parent := stack[len(stack)-1].node; parent != nil {
+					parent.parts = append(parent.parts, part{child: f.node})
+				}
+				stack = append(stack, f)
+				continue
+			}
+			if isITunes(t.Name, "iTunesMetadata") {
+				f.sidecar = true
+				f.node = &node{name: t.Name, attrs: t.Attr, line: line, column: column, lang: f.lang}
+				stack = append(stack, f)
+				continue
 			}
 			if lang, ok := attribute(t.Attr, xmlNS, "lang"); ok {
 				f.lang = lang
 			}
-			if space, ok := attribute(t.Attr, xmlNS, "space"); ok {
-				if space != "preserve" && space != "default" {
-					err = fmt.Errorf("ttml: line %d column %d: invalid xml:space", line, column)
-					break
-				}
-				f.preserve = space == "preserve"
-			}
 			if err = d.validateElement(t, line, column); err != nil {
 				break
+			}
+			if t.Name.Space == ttmNS && t.Name.Local == "agent" && hasAncestor(stack, "head") {
+				d.readAgentType(t.Attr)
 			}
 			if role, _ := attributeEither(t.Attr, ttmNS, "role"); role == "x-bg" {
 				for _, ancestor := range stack {
@@ -154,7 +190,7 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 				}
 			}
 			if paragraph != nil || isTT(t.Name, "p") {
-				f.node = &node{name: t.Name, attrs: t.Attr, line: line, column: column, lang: f.lang, preserve: f.preserve}
+				f.node = &node{name: t.Name, attrs: t.Attr, line: line, column: column, lang: f.lang}
 				if paragraph == nil {
 					paragraph = f.node
 				} else {
@@ -170,7 +206,10 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 				if key == "" || !ok {
 					err = p.Warn(line, column, "metadata", "meta requires key and value")
 				} else {
-					d.metadata = append(d.metadata, lyric.Property{Name: key, Value: value})
+					value = strings.TrimFunc(value, ttmlWhitespace)
+					if value != "" {
+						d.metadata = append(d.metadata, lyric.Property{Name: key, Value: value})
+					}
 				}
 			}
 			stack = append(stack, f)
@@ -180,8 +219,21 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 				break
 			}
 			f := &stack[len(stack)-1]
+			if f.sidecar {
+				if isITunes(f.name, "iTunesMetadata") {
+					err = d.parseSidecar(f.node)
+				}
+				stack = stack[:len(stack)-1]
+				if len(stack) == 0 {
+					rootClosed = true
+				}
+				if err != nil {
+					break
+				}
+				continue
+			}
 			if f.metaName != "" {
-				d.metadata = append(d.metadata, lyric.Property{Name: f.metaName, Value: normalizeText(f.text.String(), false)})
+				d.metadata = append(d.metadata, lyric.Property{Name: f.metaName, Value: strings.TrimFunc(f.text.String(), ttmlWhitespace)})
 			}
 			if f.node == paragraph && paragraph != nil {
 				err = d.convertParagraph(paragraph)
@@ -194,18 +246,29 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 		case xml.CharData:
 			if len(stack) > 0 {
 				f := &stack[len(stack)-1]
+				if f.sidecar {
+					if f.node != nil {
+						f.node.parts = append(f.node.parts, part{text: string(t)})
+					}
+					break
+				}
 				if f.node != nil {
-					f.node.parts = append(f.node.parts, part{text: string(t)})
+					value := string(t)
+					// AMLL discards DOM formatting-only text nodes containing a
+					// newline before it normalizes the remaining text nodes.
+					if !formattingWhitespace(value) {
+						f.node.parts = append(f.node.parts, part{text: value})
+					}
 				} else if f.metaName != "" {
 					f.text.Write(t)
 				}
-			} else if len(bytes.TrimSpace(t)) != 0 {
-				err = fmt.Errorf("ttml: line %d column %d: text outside tt root", line, column)
+			} else if len(bytes.Trim(t, " \t\r\n")) != 0 {
+				err = formatutil.Error(line, column, "xml", "text outside tt root")
 			}
 		case xml.Directive:
 			err = fmt.Errorf("ttml: line %d column %d: XML directives and DTDs are unsupported", line, column)
 		case xml.ProcInst:
-			if t.Target != "xml" || rootSeen {
+			if t.Target != "xml" || rootSeen || tokenOffset != 0 {
 				err = fmt.Errorf("ttml: line %d column %d: processing instructions are unsupported", line, column)
 			}
 		}
@@ -222,6 +285,26 @@ func Parse(ctx context.Context, data []byte, options common.Options) (common.Res
 			err = formatutil.Error(lastLine, lastColumn, "ttml", err.Error())
 		}
 		return common.Result{Diagnostics: p.Diagnostics}, err
+	}
+	if err = d.applyAgentDuets(); err != nil {
+		return common.Result{Diagnostics: p.Diagnostics}, err
+	}
+	if err = d.applySidecars(); err != nil {
+		return common.Result{Diagnostics: p.Diagnostics}, err
+	}
+	hasTimingMode := false
+	for _, property := range d.metadata {
+		hasTimingMode = hasTimingMode || property.Name == "timingMode"
+	}
+	if !hasTimingMode {
+		mode := "Line"
+		for _, line := range d.lines {
+			if len(line.Words) > 1 {
+				mode = "Word"
+				break
+			}
+		}
+		d.addMetadataUnique("timingMode", mode)
 	}
 	return p.Finish(d.lines, d.metadata, 0)
 }
@@ -273,11 +356,10 @@ func (d *documentParser) validateElement(t xml.StartElement, line, column int) e
 			if attr.Value != "media" {
 				return fmt.Errorf("ttml: line %d column %d: only media time base is supported", line, column)
 			}
-		case "begin", "end", "dur":
-			if isTT(t.Name, "body") || isTT(t.Name, "div") {
-				return fmt.Errorf("ttml: line %d column %d: timing on body/div is outside the absolute lyric profile", line, column)
-			}
 		case "ruby", "style", "region":
+			if attr.Name.Local == "ruby" && attr.Name.Space == stylingNS && (attr.Value == "container" || attr.Value == "base" || attr.Value == "textContainer" || attr.Value == "text") {
+				continue
+			}
 			if err := d.p.Warn(line, column, "unsupported-style", "styling, layout and ruby attributes are ignored"); err != nil {
 				return err
 			}
@@ -292,7 +374,17 @@ func (d *documentParser) validateElement(t xml.StartElement, line, column int) e
 	if t.Name.Local == "meta" && (t.Name.Space == amllNS || t.Name.Space == "") {
 		return nil
 	}
-	if t.Name.Local == "image" || t.Name.Local == "audio" || t.Name.Local == "video" {
+	if isTT(t.Name, "audio") {
+		// Audio timing annotations carry no resource and never cause I/O.
+		if value, ok := attribute(t.Attr, "", "lyricOffset"); ok {
+			d.addMetadataUnique("lyricOffset", value)
+		}
+		if value, ok := attribute(t.Attr, "", "role"); ok {
+			d.addMetadataUnique("audioRole", value)
+		}
+		return nil
+	}
+	if t.Name.Local == "image" || t.Name.Local == "video" {
 		return fmt.Errorf("ttml: line %d column %d: media elements are unsupported", line, column)
 	}
 	return d.p.Warn(line, column, "unsupported-element", "unsupported element "+t.Name.Local+"; text content is retained")
@@ -327,20 +419,35 @@ func attributeEither(attrs []xml.Attr, ns, local string) (string, bool) {
 	return attribute(attrs, "", local)
 }
 
-func normalizeText(text string, preserve bool) string {
-	if preserve {
-		return text
-	}
-	return strings.Join(strings.FieldsFunc(text, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '\r' || r == '\n'
-	}), " ")
+// ttmlWhitespace matches the whitespace set used by AMLL's JavaScript
+// /\s+/g normalization rather than Go's broader Unicode whitespace table.
+func ttmlWhitespace(r rune) bool {
+	return r >= '\t' && r <= '\r' || r == ' ' || r == 0x00a0 || r == 0x1680 ||
+		r >= 0x2000 && r <= 0x200a || r == 0x2028 || r == 0x2029 ||
+		r == 0x202f || r == 0x205f || r == 0x3000 || r == 0xfeff
 }
 
-// parseTime deliberately avoids floating point so large or precise timestamps
-// cannot silently round across a half-open interval boundary.
+// formattingWhitespace matches AMLL's special skip for an indentation-only
+// text node containing a line feed. Other whitespace is normalized normally.
+func formattingWhitespace(text string) bool {
+	if !strings.ContainsRune(text, '\n') {
+		return false
+	}
+	for _, r := range text {
+		if !ttmlWhitespace(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// parseTime accepts AMLL clock and bare-second expressions, rounding the time
+// to AMLL's millisecond unit without float overflow. Suffixed h/m/ms forms are
+// retained as a local parser extension.
 func parseTime(value string) (time.Duration, error) {
-	if value == "" || strings.TrimSpace(value) != value {
-		return 0, fmt.Errorf("invalid time %q", value)
+	value = strings.TrimFunc(value, ttmlWhitespace)
+	if value == "" {
+		return 0, fmt.Errorf("invalid time")
 	}
 	if strings.Contains(value, ":") {
 		parts := strings.Split(value, ":")
@@ -350,6 +457,8 @@ func parseTime(value string) (time.Duration, error) {
 		var total time.Duration
 		for i, part := range parts {
 			unit := time.Second
+			var term time.Duration
+			var err error
 			if i < len(parts)-1 {
 				unit = time.Minute
 				if len(parts) == 3 && i == 0 {
@@ -359,7 +468,11 @@ func parseTime(value string) (time.Duration, error) {
 					return 0, fmt.Errorf("invalid clock %q", value)
 				}
 			}
-			term, err := decimalDuration(part, unit)
+			if i == len(parts)-1 {
+				term, err = roundAMLLSeconds(part)
+			} else {
+				term, err = decimalDuration(part, unit)
+			}
 			if err != nil || (i > 0 && term >= 60*unit) || term > time.Duration(math.MaxInt64)-total {
 				return 0, fmt.Errorf("invalid or overflowing clock %q", value)
 			}
@@ -372,10 +485,70 @@ func parseTime(value string) (time.Duration, error) {
 		unit time.Duration
 	}{{"ms", time.Millisecond}, {"h", time.Hour}, {"m", time.Minute}, {"s", time.Second}} {
 		if strings.HasSuffix(value, suffix.text) {
-			return decimalDuration(strings.TrimSuffix(value, suffix.text), suffix.unit)
+			if suffix.unit == time.Second {
+				return roundAMLLSeconds(strings.TrimSuffix(value, suffix.text))
+			}
+			result, err := decimalDuration(strings.TrimSuffix(value, suffix.text), suffix.unit)
+			if err != nil {
+				return 0, err
+			}
+			return result, nil
 		}
 	}
-	return 0, fmt.Errorf("unsupported time %q (frame/tick units are unsupported)", value)
+	// The fixed AMLL parser also accepts bare decimal seconds. This is an
+	// intentional compatibility addition; nanosecond precision is rounded to
+	// its millisecond output unit using positive Math.round semantics.
+	result, err := roundAMLLSeconds(value)
+	if err != nil {
+		return 0, fmt.Errorf("unsupported time %q (frame/tick units are unsupported): %w", value, err)
+	}
+	return result, nil
+}
+
+// roundAMLLSeconds implements positive JavaScript Math.round(seconds*1000)
+// without floating-point loss and accepts arbitrarily long decimal fractions.
+func roundAMLLSeconds(value string) (time.Duration, error) {
+	parts := strings.Split(value, ".")
+	if len(parts) > 2 || parts[0] == "" || len(parts) == 2 && parts[1] == "" {
+		return 0, fmt.Errorf("invalid decimal seconds %q", value)
+	}
+	for _, part := range parts {
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return 0, fmt.Errorf("invalid decimal seconds %q", value)
+			}
+		}
+	}
+	whole, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || whole > math.MaxInt64/int64(time.Second) {
+		return 0, fmt.Errorf("overflowing seconds %q", value)
+	}
+	var fractionMilliseconds int64
+	if len(parts) == 2 {
+		fraction := parts[1]
+		for i := 0; i < 3; i++ {
+			fractionMilliseconds *= 10
+			if i < len(fraction) {
+				fractionMilliseconds += int64(fraction[i] - '0')
+			}
+		}
+		if len(fraction) > 3 && fraction[3] >= '5' {
+			fractionMilliseconds++
+		}
+	}
+	if fractionMilliseconds == 1000 {
+		whole++
+		fractionMilliseconds = 0
+	}
+	if whole > math.MaxInt64/int64(time.Second) {
+		return 0, fmt.Errorf("millisecond rounding overflows time.Duration")
+	}
+	base := whole * int64(time.Second)
+	extra := fractionMilliseconds * int64(time.Millisecond)
+	if base > math.MaxInt64-extra {
+		return 0, fmt.Errorf("millisecond rounding overflows time.Duration")
+	}
+	return time.Duration(base + extra), nil
 }
 
 func decimalDuration(value string, unit time.Duration) (time.Duration, error) {

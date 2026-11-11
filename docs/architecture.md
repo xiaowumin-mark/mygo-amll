@@ -35,15 +35,17 @@ flowchart TD
 
 ## 文档与时间语义
 
-当前 `lyric.NewDocument([]lyric.Line)` 验证后复制行、词切片。`NewDocumentWithMetadata` 还快照有序 `Property`，重复键不丢失。字符串作为 Go 不可变值共享；格式层通过克隆输出字符串避免小子串保留巨大输入。通过 `Document.Line(i)` 的只读 `LineView` 访问数据，`Word(i)`、`Property(i)` 返回值副本。显式行 ID 必须唯一，省略则生成确定性的文档局部 ID；Agent/Language 保留源语义。索引越界沿用 Go 切片的 panic 语义；`LineView` 零值不可使用。视图会保留所属文档的底层存储，换曲时必须清理缓存引用。
+当前 `lyric.NewDocument([]lyric.Line)` 验证后复制行、词及词内 Ruby 切片。`NewDocumentWithMetadata` 还快照有序 `Property`，重复键不丢失。字符串作为 Go 不可变值共享；格式层通过克隆输出字符串避免小子串保留巨大输入。通过 `Document.Line(i)` 的只读 `LineView` 访问数据；`Word(i)` 深复制可选 Ruby 切片，普通无 Ruby 词无需分配，`RubyCount` / `Ruby` 提供无需复制切片的逐项读取。`Property(i)` 返回值副本。显式行 ID 必须唯一，省略则生成确定性的文档局部 ID；Agent/Language 保留源语义。背景行的可选 `ParentID` 必须指向文档内的非背景主行，稳定时间排序不改变关联。索引越界沿用 Go 切片的 panic 语义；`LineView` 零值不可使用。视图会保留所属文档的底层存储，换曲时必须清理缓存引用。
 
-时间统一为 `time.Duration` 的歌曲绝对位置，词不是行内相对偏移。区间使用 `[start, end)`，要求 `0 <= start < end`；行和词按开始时间非递减排列，允许相同开始、交叠、对唱和背景唱词。词必须落在所属行区间。空文档合法，非法输入返回包含行/词索引的错误；核心不隐式排序、猜测结束时间或截断输入。
+时间统一为 `time.Duration` 的歌曲绝对位置，词不是行内相对偏移。默认 `NewDocument` / `NewDocumentWithMetadata` 继续要求行、词区间 `0 <= start < end`，行和词按开始时间非递减排列，词必须落在所属行区间；允许相同开始、交叠、对唱和背景唱词。Ruby 在默认构造下按开始时间排列、位于所属词内，允许点注释。空文档合法，非法输入返回包含行/词索引的错误；核心不隐式排序、猜测结束时间或截断输入。
 
-零时长词、未知行尾、格式偏移量由 M2 解析/规范化层处理，并保留诊断；只读核心仍不默默修复。当前模型不能无损承载全部 TTML 扩展。已加入行语言与 agent 标识，ruby、敏感词标记、音节及更丰富角色关系仍需专门设计和测试。
+`NewDocumentWithOptions(lines, metadata, DocumentOptions{PreserveSourceTiming: true})` 是显式的源时间保留入口。它要求行按开始时间排列，行、词和 Ruby 的两个端点均非负；原样保留文本顺序、点区间、反向行/词时间、非单调词开始及越出父区间的端点，不交换、裁剪或重排。各格式在解析层显式选择兼容规则，不通过放宽默认构造器接收历史源数据。点行与反向行可以保存和查询，但不会成为活动的半开区间；点词及反向词的呈现由宿主决定。默认严格构造器的拒绝行为不变。设计与调用示例见 [RFC 0005](rfcs/0005-m2-corpus-compatibility.md)。
+
+当前模型还保留逐词 `Obscene`、`EmptyBeat` 与 timed Ruby。TTML 按固定 AMLL 的简化歌词视图选择首个可用翻译/音译，内联值优先于 sidecar，逐词 sidecar 音译按开始时间和区间交并比匹配；不暴露全部语言和逐词翻译数组。`ttm:agent` 的类型声明用于源顺序对唱交替：group 不改变交替状态，首次 other 从对唱侧开始，其他不同非 group ID 切换侧；背景继承主行侧。根语言、timingMode、songwriters 和无资源 audio 的 lyricOffset/role 作为属性保留，audio 属性不触发播放、偏移或 I/O。严格 XML 命名空间检查拒绝未声明前缀和重复展开属性。该模型不承诺完整 TTML、Apple 扩展或无损往返。
 
 当前 `timeline.New(doc)` 用每行一个 `time.Duration` 保存前缀最大结束时间，引用只读文档，不再复制全文。`ActiveAt(position, dst)` 清空并复用调用方切片，按文档顺序返回所有活动行；不足的容量会触发扩容。查询可任意前后 seek。复杂度是 `O(log n + c)`，`c` 为候选窗口，长区间重叠时最坏 `O(n)`，不是无条件 `O(log n + 活动行数)`。
 
-M2 的 `VisualAt` 已区分活动唱词、持续高亮、当前滚动锚点、间奏区间和结束态，使用既有索引且可由绝对时间重建 seek 状态，不额外增加每行存储。活动和高亮使用调用方提供的两个不重叠缓冲，复杂度同样为 `O(log n + c)`。`FollowController` 只控制是否应用自动焦点，由宿主注入单调交互时间和可见性，不持有文档、时钟或 UI 资源；其可变实例不支持并发调用。行唱完后仍可能保留高亮，不能将 `ActiveAt` 的结果直接当成最终视觉状态。完整规则见 [M2 说明](m2-core-formats.md)。
+M2 的 `VisualAt` 已区分活动唱词、持续高亮、当前滚动锚点、间奏区间和结束态，使用既有索引且可由绝对时间重建 seek 状态，不额外增加每行存储。源时间保留文档的最近开始组若只有点行且没有活动高亮，焦点取该开始时间的首行，高亮保持空；查询不因空高亮组越界。活动和高亮使用调用方提供的两个不重叠缓冲，复杂度同样为 `O(log n + c)`。`FollowController` 只控制是否应用自动焦点，由宿主注入单调交互时间和可见性，不持有文档、时钟或 UI 资源；其可变实例不支持并发调用。行唱完后仍可能保留高亮，不能将 `ActiveAt` 的结果直接当成最终视觉状态。完整规则见 [M2 说明](m2-core-formats.md)。
 
 ## 播放时钟与动画
 

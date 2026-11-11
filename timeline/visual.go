@@ -49,6 +49,8 @@ type VisualState struct {
 // there during an interlude or after completion. Before the first line it is 0;
 // for an empty document it is -1. During InInterlude, the UI should align to the
 // Interlude instead of Focus. LatestHighlighted is -1 when highlighting is empty.
+// A source-preserving document can contain point lines; if its latest start has
+// no active cohort, Focus is the first line at that start and highlighting is empty.
 // Negative positions have no activity, interlude or highlighting.
 //
 // Queries cost O(log n + c), with c the candidate interval window at the current
@@ -71,7 +73,11 @@ func (index *Index) VisualAt(position time.Duration, playingDst, highlightedDst 
 	if upper > 0 {
 		latestStart := index.document.Line(upper - 1).Start()
 		state.Highlighted = index.ActiveAt(latestStart, state.Highlighted)
-		state.Focus = state.Highlighted[0]
+		if len(state.Highlighted) > 0 {
+			state.Focus = state.Highlighted[0]
+		} else {
+			state.Focus = sort.Search(upper, func(i int) bool { return index.document.Line(i).Start() >= latestStart })
+		}
 	}
 	state.Ended = position >= index.prefixMaxEnd[n-1]
 	if upper < n {

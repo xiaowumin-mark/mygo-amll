@@ -19,6 +19,10 @@ type Line struct {
 	lyric.Line
 	SourceLine int
 	InferEnd   bool
+	// PreserveTiming retains source-order point and non-monotonic word timing.
+	// AMLL-compatible parsers need this for historical corpus entries and
+	// generated zero-timed spaces. Other callers retain strict normalization.
+	PreserveTiming bool
 }
 
 // Parser is private to one parse call. It never retains source bytes.
@@ -165,7 +169,7 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 				return result, err
 			}
 		}
-		if err := countText(line.SourceLine, line.ID, line.Text, line.Translation, line.Romanization, line.Agent, line.Language); err != nil {
+		if err := countText(line.SourceLine, line.ID, line.ParentID, line.Text, line.Translation, line.Romanization, line.Agent, line.Language); err != nil {
 			return result, err
 		}
 		for j, word := range line.Words {
@@ -176,6 +180,11 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 			}
 			if err := countText(line.SourceLine, word.Text, word.Romanization); err != nil {
 				return result, err
+			}
+			for _, ruby := range word.Ruby {
+				if err := countText(line.SourceLine, ruby.Text); err != nil {
+					return result, err
+				}
 			}
 		}
 	}
@@ -226,6 +235,15 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 					return result, Error(line.SourceLine, 1, "time", err.Error())
 				}
 			}
+			for k := range word.Ruby {
+				ruby := &word.Ruby[k]
+				if ruby.Start, err = Shift(ruby.Start, offset); err != nil {
+					return result, Error(line.SourceLine, 1, "time", err.Error())
+				}
+				if ruby.End, err = Shift(ruby.End, offset); err != nil {
+					return result, Error(line.SourceLine, 1, "time", err.Error())
+				}
+			}
 		}
 	}
 	// Each equal-start group shares the next distinct start: no quadratic scan.
@@ -266,7 +284,7 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 				}
 			}
 			for _, word := range line.Words {
-				if word.End > line.End {
+				if !line.PreserveTiming && word.End > line.End {
 					return result, Error(line.SourceLine, 1, "time", "word exceeds inferred line end")
 				}
 			}
@@ -284,9 +302,17 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 			return result, Error(line.SourceLine, 1, "limit", "word limit exceeded")
 		}
 		totalWords += len(line.Words)
-		for j, word := range line.Words {
-			if j > 0 && word.Start < line.Words[j-1].Start {
-				return result, Error(line.SourceLine, 1, "time", fmt.Sprintf("word %d precedes previous word", j))
+		for _, word := range line.Words {
+			if len(word.Ruby) > p.Options.Limits.MaxWords-totalWords {
+				return result, Error(line.SourceLine, 1, "limit", "Ruby segment limit exceeded")
+			}
+			totalWords += len(word.Ruby)
+		}
+		if !line.PreserveTiming {
+			for j, word := range line.Words {
+				if j > 0 && word.Start < line.Words[j-1].Start {
+					return result, Error(line.SourceLine, 1, "time", fmt.Sprintf("word %d precedes previous word", j))
+				}
 			}
 		}
 		n := 0
@@ -298,11 +324,11 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 			}
 			if word.End < 0 {
 				word.End = line.End
-				if j+1 < len(line.Words) {
+				if j+1 < len(line.Words) && line.Words[j+1].Start >= word.Start {
 					word.End = line.Words[j+1].Start
 				}
 			}
-			if word.End == word.Start {
+			if word.End == word.Start && !line.PreserveTiming {
 				if word.Start < line.Start || word.Start > line.End {
 					return result, Error(line.SourceLine, 1, "time", "zero-duration word lies outside line interval")
 				}
@@ -312,22 +338,26 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 				continue
 			}
 			word.Text, word.Romanization = strings.Clone(word.Text), strings.Clone(word.Romanization)
+			for k := range word.Ruby {
+				word.Ruby[k].Text = strings.Clone(word.Ruby[k].Text)
+			}
 			line.Words[n] = word
 			n++
 		}
 		clear(line.Words[n:])
 		line.Words = line.Words[:n]
 		line.ID, line.Text = strings.Clone(line.ID), strings.Clone(line.Text)
+		line.ParentID = strings.Clone(line.ParentID)
 		line.Translation, line.Romanization = strings.Clone(line.Translation), strings.Clone(line.Romanization)
 		line.Agent, line.Language = strings.Clone(line.Agent), strings.Clone(line.Language)
-		if line.End <= line.Start {
+		if !line.PreserveTiming && line.End <= line.Start {
 			return result, Error(line.SourceLine, 1, "time", "require line start < end")
 		}
 		for j, word := range line.Words {
-			if word.Start < line.Start || word.End <= word.Start || word.End > line.End {
+			if word.Start < 0 || word.End < 0 || !line.PreserveTiming && (word.Start < line.Start || word.End <= word.Start || word.End > line.End) {
 				return result, Error(line.SourceLine, 1, "time", fmt.Sprintf("word %d requires line.start <= start < end <= line.end", j))
 			}
-			if j > 0 && word.Start < line.Words[j-1].Start {
+			if !line.PreserveTiming && j > 0 && word.Start < line.Words[j-1].Start {
 				return result, Error(line.SourceLine, 1, "time", fmt.Sprintf("word %d precedes previous word", j))
 			}
 		}
@@ -344,7 +374,11 @@ func (p *Parser) Finish(lines []Line, metadata []lyric.Property, offset time.Dur
 	if err := p.Check(); err != nil {
 		return result, err
 	}
-	result.Document, err = lyric.NewDocumentWithMetadata(output, metadata)
+	var documentOptions lyric.DocumentOptions
+	for _, line := range lines {
+		documentOptions.PreserveSourceTiming = documentOptions.PreserveSourceTiming || line.PreserveTiming
+	}
+	result.Document, err = lyric.NewDocumentWithOptions(output, metadata, documentOptions)
 	if err != nil {
 		return result, Error(1, 1, "document", err.Error())
 	}

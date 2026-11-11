@@ -2,6 +2,8 @@
 
 日期：2026-11-09。状态：所有者已确认完整 M2 验收通过，并授权提交合并；各格式按独立 PR 交付，远程检查结果以对应 PR 为准。尚未发布版本。设计讨论与取舍见 [RFC 0002](rfcs/0002-m2-lyric-formats.md)。本轮不改变 M1 原生示例，不将纯 Go 测试作为窗口/GPU 验收。
 
+2026-11-11 追加：所有者要求以完整数据库复核 M2。当前源时间兼容策略与解析扩展见 [RFC 0005](rfcs/0005-m2-corpus-compatibility.md)，固定版本、全量差分、非法源 XML 与检查结果见 [全库记录](m2-corpus-validation.md)。下方基准保留 2026-11-09 历史记录，本次数据单独列示。
+
 ## 验收单元
 
 1. **模型与视觉时间**：`lyric` 的稳定行 ID、agent/language 与只读重复元数据；`timeline.VisualAt` 的活动/高亮/焦点/间奏/曲终；`FollowController` 的手动交互与恢复。
@@ -19,7 +21,7 @@
 - [核心与 LRC：PR #8](https://github.com/xiaowumin-mark/mygo-amll/pull/8) 已 squash 合并。
 - [YRC：PR #9](https://github.com/xiaowumin-mark/mygo-amll/pull/9) 已 squash 合并。
 - [QRC：PR #10](https://github.com/xiaowumin-mark/mygo-amll/pull/10) 已 squash 合并。
-- TTML、四格式集成测试、示例及完整文档为最后一个独立 PR，与本文一同交付，检查与合并结果以该 PR 为准。
+- [TTML 与集成：PR #11](https://github.com/xiaowumin-mark/mygo-amll/pull/11) 已 squash 合并，基线为 `24d0740`。
 
 前三个 PR 均在 Windows/macOS/Linux 四组核心检查（含 Ubuntu stable）、标题检查和基准报告全部通过后合并；检查包含 race 及 Native 示例构建，仍不等于真实窗口/GPU 验收。每个独立提交快照也在本机隔离 worktree 运行了完整检查。未合并 release PR、打标签或发布版本。
 
@@ -56,9 +58,9 @@ playing, highlighted = state.Playing, state.Highlighted
 
 ## 时间、身份与视觉规则
 
-- 所有行和词使用歌曲绝对 `time.Duration`，区间为 `[start,end)`。原始格式时间单位先转换，再统一应用 offset；正 offset 向后移。时间溢出、负时间、逆序词和词越出行区间为错误。
+- 所有行和词使用歌曲绝对 `time.Duration`，正常区间为 `[start,end)`。默认文档构造器严格要求正时长、词按开始时间排列且位于行内；格式解析器通过显式 `NewDocumentWithOptions(..., DocumentOptions{PreserveSourceTiming:true})` 保留非负源端点与文本顺序，包含 point、反向、越界和非单调时间。point/反向行永不活动；不交换端点、不按时间重排词。时间溢出与负端点仍失败。LRC 的 offset 仅为 AMLL metadata；YRC/QRC 的 offset 按其支持规则平移时间，TTML 无隐式偏移。
 - 行按开始时间稳定排序并产生 `sorted` 诊断；相同开始时间和任意重叠不合并，也不猜测它们是翻译。严格文档构造器继续拒绝未排序输入，排序仅发生在格式层。
-- 文档显式 ID 不能重复；没有 ID 的核心行得到确定性的文档局部身份。LRC 使用源行与时间标签序号，YRC/QRC 使用源行，TTML 优先保留 `xml:id`。时间查询和排序不改变 ID；自动 ID 不保证跨任意文本编辑稳定。`PropertyCount` / `Property(i)` 返回元数据值，不泄漏切片。
+- 文档显式 ID 不能重复；没有 ID 的核心行得到确定性的文档局部身份。LRC 使用源行与时间标签序号，YRC/QRC 使用源行，TTML 优先保留 `itunes:key`，兼容 `xml:id` 与生成身份。背景 `ParentID` 必须指向主行。时间查询和排序不改变 ID；自动 ID 不保证跨任意文本编辑稳定。`PropertyCount` / `Property(i)` 返回元数据值，不泄漏切片；Ruby 由构造器深复制，按标量读取时不借出底层切片。
 - 已完成行持续高亮到下一次不同开始时间。新行开始时，仍活动的旧行与新行共同组成保留高亮组；短间隔保留该组。间奏和曲终清空高亮。`Focus` 是组中第一行，间奏/曲终保留锚点；`LatestHighlighted` 是当前高亮的最后一行，空时为 -1。
 - 间奏要求未演唱间隙至少 **7,000 ms**，使用此前所有行最大结束时间；前奏同样适用，不将负歌曲位置视为间奏。曲终使用全局最大结束时间，不依赖最后开始的行，也不代表宿主音频已结束。空文档 `Focus=-1`、`Ended=false`。
 - 手动交互期间不应用自动焦点，但活动与高亮继续更新。`EndInteraction` 后静止至少 **500 ms**，还须出现新的、可见且正在演唱的焦点才自动恢复；单纯超时不抢回。`Resume` 立即恢复；`Seek` 在没有进行中的手势时恢复。交互时间是宿主提供的同一起点单调时间，不能使用会倒退的歌曲位置。换曲用 `Resume` 清除焦点历史。
@@ -70,7 +72,7 @@ playing, highlighted = state.Playing, state.Highlighted
 | `MaxBytes` | 8 MiB | 原始输入，含 BOM |
 | `MaxTextBytes` | 16 MiB | 展开后的源 ID、行/词文本、注释、agent、language 与元数据字节总和，重复文本分别计入，复制字符串前检查；生成 ID 由行数单独约束 |
 | `MaxLines` | 100,000 | 物理输入行和展开后的输出行分别受限；末尾换行不额外计一行 |
-| `MaxWords` | 1,000,000 | 输出时间词，含后续删除的零时长词和多时间标签复制出的词 |
+| `MaxWords` | 1,000,000 | 时间词、Ruby 与 sidecar 时间段；未选语言也计数，多时间标签复制出的词另受最终输出计数约束 |
 | `MaxDepth` | 32 | TTML XML 嵌套层数，根为第 1 层 |
 | `MaxDiagnostics` | 100 | 警告条数；超出即失败，不丢弃后续诊断继续解析 |
 
@@ -80,21 +82,21 @@ playing, highlighted = state.Playing, state.Highlighted
 
 仅接受 UTF-8，可有 BOM，支持 LF/CRLF/CR；其他编码应由宿主先显式转换。非法编码不会被替换成问号继续。空文件返回合法空文档。输入扫描、逐行/逐词/XML token 转换和规范化期间检查上下文；排序及最终文档快照没有抢占式中断，取消延迟受到本次输入预算约束。调用期间不得改写输入；返回后可复用源字节。文档复制行、词和元数据，解析器对输出字符串解除源缓冲引用。
 
-未知行结束优先使用下一**不同**开始时间；最后一组使用宿主 `Options.Duration`（歌曲绝对曲终，不随 offset 平移），否则使用 `FinalLineDuration`，默认 **5 秒**，并给出 `inferred-end` 诊断。指定负时长是配置错误。推断结果不能容纳词、或曲终不晚于行开始时失败。零时长词只在行范围内移除时间并产生 `zero-word` 诊断，行全文仍保留；位于行外的零时长词不会因此被接受。
+共同未知行尾使用下一**不同**开始时间、宿主 `Options.Duration`（绝对曲终，不随 offset 平移）或 `FinalLineDuration`（默认 **5 秒**，产生 `inferred-end`）。LRC 另按 AMLL 的结尾标记及末行 sentinel 处理；YRC/QRC 时长显式。源时间兼容模式保留零时长词和越界词；严格默认构造器仍拒绝它们。`Strict` 仍将每条诊断变为错误，不自动修复历史源时序。
 
 ## 各格式支持子集
 
 | 格式 | 支持与时间单位 | 结束、偏移与异常 |
 | --- | --- | --- |
-| LRC | `[minutes:ss]` / `.1` 至 `.123`，秒必须小于 60；多个前置时间标签复制行；ASCII 字母 metadata 键保留 | 未知结束按共同规则推断；最后一个 `[offset:有符号整数毫秒]` 生效，重复警告；无时间正文/损坏首标签警告并跳过，损坏增强标签保留全文并警告 |
-| 增强 LRC | `<minutes:ss.f>` 绝对词开始；无后续文字的末尾标签明确结束；多时间标签的副本相应平移词时间 | 词结束取下一标记或行结束；时间标记必须非递减；不推断翻译、角色与背景；不解释 AMLL 私有扩展 |
-| YRC | `[行开始,行时长](词开始,词时长,flags)词文`，均为整数毫秒绝对时间 | 显式结束，不猜测；非零 flags 警告；offset 规则同 LRC；metadata 键转小写；损坏词语法和非空无时间正文为错误 |
-| QRC | `[行开始,行时长]词文(词开始,词时长)`，均为整数毫秒绝对时间 | 显式结束；offset 规则同 LRC；metadata 键转小写；尾部无词时间、损坏词语法为错误；不接收 XML/服务容器、压缩或加密内容 |
-| TTML | `tt/head/metadata/body/div/p/span/br`；W3C、legacy 或无命名空间；p/span 绝对时间；`hh:mm:ss.f`、`mm:ss.f`、十进制 `h/m/s/ms`，精确到纳秒；`dur` 相对本元素 begin | p 缺 begin 可从词推断并警告；全部词尾明确时可从最大词尾推断行尾并警告，否则共同推断；无额外 offset；不支持的时间语义报错 |
+| LRC | AMLL SPL/LRC 时间标签：1–3 位分、1–2 位秒、可选 1–6 位小数（点或冒号分隔，小数截至毫秒）；多个前置时间复制普通行 | offset 仅保留 metadata；键转小写、重复值去重；相同开始的后续文本与邻接未计时文本成为翻译；括号包围的行成为背景；最后普通行默认 `999:59.999` |
+| 增强 LRC / ESLRC | 方括号或尖括号绝对词时间；末尾标签显式关闭行；保留源顺序与零时间空格 | 多个前置标签取第一个为行开始、最后一个为首词开始；末行缺尾时默认最后词开始后 1 秒；未知行尾使用下一排序行，包含同开始行；宿主 Duration 可覆盖推断末尾 |
+| YRC | `[行开始,行时长](词开始,词时长,0)词文`，整数毫秒绝对时间；按 AMLL 惰性扫描标记 | 仅 flags=0 是时间 token，其他括号为标记间正文；空 payload 跳过，无有效标记的非空 payload 保留空词行；显式时长、metadata offset 平移；保留 `(0,0,0)` 空格 |
+| QRC | `[行开始,行时长]词文(词开始,词时长)`，整数毫秒绝对时间；按 AMLL 惰性扫描标记 | 未匹配尾文忽略，无有效标记的非空 payload 保留空词行；显式时长、metadata offset 平移；保留 `(0,0)` 空格；不解包服务容器、加密或压缩 |
+| TTML | W3C、legacy 或无命名空间的歌词 XML；p/span 绝对时间、iTunes 行键、背景、翻译/音译、timed Ruby、obscene/empty-beat | body/div 时间不作偏移；普通时钟与裸秒按毫秒取整，显式 Apple Word 小数秒及 h/m/ms 后缀是本库精度扩展；词/背景可扩展行范围；无隐式 offset |
 
-YRC/QRC metadata 键以 ASCII 字母开头，其余可为字母、数字、下划线和连字符，统一转为小写，值与重复顺序保留；LRC 键仅接收 ASCII 字母且保留大小写。YRC/QRC 的圆括号是保留的词时间语法；本子集不解释 AMLL 的整行全角括号背景约定，全角括号保留为普通文本，也不从明文猜测对唱、翻译和音译。TTML 才提供明确角色映射：`xml:id/lang/space`、`ttm:agent`、`x-bg`、`x-translation`、`x-roman`；背景成为独立重叠行，`v2` 是另一对唱侧，其余 agent 名称原样保留。AMLL meta 的 key/value、ttm:title/name 进入有序元数据。
+YRC/QRC metadata 键以 ASCII 字母开头，其余可为字母、数字、下划线和连字符，统一转小写，值与重复顺序保留；LRC 键仅接收 ASCII 字母并转小写。三类明文格式都支持完整 ASCII/全角括号对的背景约定，YRC/QRC 不推断翻译/音译/对唱。TTML 的背景成为独立行并关联 ParentID，agent 类型与源顺序决定对唱侧。AMLL meta 值先裁剪外围 ECMAScript 空白、略过空值；ttm:title/name、根语言、timingMode、songwriters 及纯 audio 时间属性保留为元数据。普通 `xml:space` 不改变 AMLL 的空白规则。
 
-TTML 不宣称完整 TTML 或 Apple Music 兼容：body/div 的时间、seq 容器、frame/tick 时间、嵌套 timed span、词内 annotation 和嵌套背景不在本 profile 内。样式、layout、ruby 与未知扩展给出警告；DTD、非声明用途 PI、媒体及外部资源引用被拒绝。只解码标准 XML 预定义实体和字符引用，不读取文件、URL 或网络。
+TTML 支持当前及旧 iTunes namespace、继承 TTML namespace 的 iTunesMetadata、首语言 inline/sidecar 翻译/音译与逐词音译匹配；未选语言不构成无损保存承诺。seq、frame/tick、嵌套 timed span、词内 annotation、嵌套背景和一般样式布局仍不在本 profile 内。DTD、外部实体声明、位置不合法的 XML 声明和外部资源引用被拒绝；未声明前缀、重复展开属性与 QName 配对错误返回结构性诊断。无资源 audio 属性不会启动 I/O。具体边界见 [RFC 0005](rfcs/0005-m2-corpus-compatibility.md)。
 
 ## 验证记录
 
