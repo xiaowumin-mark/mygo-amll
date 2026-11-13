@@ -1,6 +1,6 @@
 # 模块设计
 
-状态：2026-11-09。纯 Go 核心、M2 格式与视觉时间、`examples/native` 的 M1 技术验证已有源码；M2 已由所有者确认验收通过，详见 [支持范围](m2-core-formats.md)。下文仍标“规划”的包是实施契约，不是已可调用 API。M1 示例内的非导出类型不构成公共组件。当前主模块为 `github.com/xiaowumin-mark/mygo-amll`，采用 Go 原生目录约定，不设置多余的 `src/` 层。
+状态：2026-11-13。纯 Go 核心、M2 格式/视觉时间及 M3 Native 高保真示例已有实现；M2 与本轮 M3 视觉改动已由所有者验收。M3 实际布局、motion 和 render 适配仍留在 `examples/native` 与 `internal/...`，不构成稳定公共组件 API。性能测量仍明确区分未测的平台和逐呈现帧数据，见 [M3 记录](m3-rendering.md)。下文仍标“规划”的包是实施契约，不是已可调用 API。当前主模块为 `github.com/xiaowumin-mark/mygo-amll`，采用 Go 原生目录约定，不设置多余的 `src/` 层。
 
 ## 依赖方向
 
@@ -25,13 +25,13 @@ flowchart TD
 | `lyric` | 验证并快照文档，逐词时间及文本元数据；无布局、播放器或 UI 状态 | 已实现 |
 | `timeline` | 按宿主绝对时间查询活动/保留高亮/焦点/间奏/曲终；独立手动跟随控制，不持有时钟 | 已实现；M2 验收通过 |
 | `format`、`format/lrc`、`format/yrc`、`format/qrc`、`format/ttml` | 公用限制/诊断与每种格式独立解析入口；不负责 I/O | 已实现明确子集；M2 验收通过 |
-| `motion` | 弹簧/缓动、seek 和减少动态效果规则；显式输入时间 | 规划 |
-| `layout` | 断行、shaping、cluster 与时间片段映射、可见范围 | 规划 |
-| `render` | 准备只读帧数据、裁剪、高亮层、滚动和命中区域 | 规划 |
+| `motion` | 弹簧/缓动、seek 和减少动态效果规则；显式输入时间 | 内部参考动画适配已实现；公共包规划 |
+| `layout` | 断行、shaping、cluster 与时间片段映射、可见范围 | Native 示例与内部行高索引已实现；公共包规划 |
+| `render` | 准备只读帧数据、裁剪、高亮层、滚动和命中区域 | Native 参考渲染已实现于示例；稳定公共 API 规划 |
 | `background` | 静态背景、封面颜色、低分辨率 shader 和转场 | 规划 |
 | `native/mygo` | Native UI 容器、UI 线程资源、动画调度、输入与无障碍 | 规划 |
 | `internal/...` | 可更换的缓存和几何实现；禁止宿主依赖 | 按需要添加 |
-| `examples/...` | 小型可运行集成，合成或授权资产 | 时间索引、格式/视觉状态及 M1 Native 技术验证示例；平台验收见 [记录](m1-native.md) |
+| `examples/...` | 小型可运行集成，合成或授权资产 | 时间索引、格式/视觉状态及已验收视觉的 M3 Native 示例；原生平台边界见 [M1](m1-native.md) 和 [M3](m3-rendering.md) 记录 |
 
 ## 文档与时间语义
 

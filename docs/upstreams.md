@@ -11,7 +11,9 @@
 | [MyGo](https://github.com/egoist/mygo) | [`eadf1fce6af3bdb9f7cacf649823de2bee2737f2`](https://github.com/egoist/mygo/tree/eadf1fce6af3bdb9f7cacf649823de2bee2737f2) | Native UI、文字塑形、自绘及 GPU 后端 | [MIT](https://github.com/egoist/mygo/blob/eadf1fce6af3bdb9f7cacf649823de2bee2737f2/LICENSE) |
 | [Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics) | [`f32285864056587c4afa59d310208b0aa829cb53`](https://github.com/amll-dev/applemusic-like-lyrics/tree/f32285864056587c4afa59d310208b0aa829cb53) | 歌词数据、播放行为、视觉效果和背景的参考 | [AGPL-3.0-only 声明](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/package.json#L4)、[许可证全文](https://github.com/amll-dev/applemusic-like-lyrics/blob/f32285864056587c4afa59d310208b0aa829cb53/LICENSE) |
 
-`ref/` 是本地调研副本，已忽略，不是运行依赖，也不随本库发布。未复制 AMLL 的歌词或背景渲染源码。M1 已在 `examples/native` 接入上述 mygo 快照，固定模块版本为 `v0.8.4-0.20261109104234-eadf1fce6af3`，提交 `go.sum`，无 `replace`；稳定组件和后续视觉效果仍待实现，平台验证见 [M1 记录](m1-native.md)。本库默认采用 AGPL-3.0-only。后续移植代码、shader、测试夹具或资源时，必须记录来源、提交和修改情况，保留适用的版权及许可证声明。MyGo 的 MIT 许可不改变 AMLL 原始材料的许可；AGPL 本身也不授予歌词、字体、专辑封面或商标的使用权。实际依赖的许可证原文与用途见 [第三方声明](../THIRD_PARTY_NOTICES.md)。
+`ref/` 是本地调研副本，已忽略，不是运行依赖，也不随本库发布。M3 已将固定 AMLL 的词布局、显示规范化、动画和状态算法适配为 Go，来源路径、许可与改动见 [第三方声明](../THIRD_PARTY_NOTICES.md) 及文件头；未复制歌词媒体或背景 shader。M1 已在 `examples/native` 接入上述 mygo 快照，固定模块版本为 `v0.8.4-0.20261109104234-eadf1fce6af3`，提交 `go.sum`，无 `replace`；稳定组件仍待实现，平台验证见 [M1 记录](m1-native.md)。本库默认采用 AGPL-3.0-only。后续移植代码、shader、测试夹具或资源时，必须记录来源、提交和修改情况，保留适用的版权及许可证声明。MyGo 的 MIT 许可不改变 AMLL 原始材料的许可；AGPL 本身也不授予歌词、字体、专辑封面或商标的使用权。
+
+M3 在同一固定快照的公开 API 上增加了内部簇映射、物理右对齐的对唱布局、注释、滚动和受限缓存，未升级依赖或接触 upstream internal。当前实现和验收范围见 [M3 记录](m3-rendering.md)，仍未发布稳定 Native 组件；动态背景继续留待 M4。截图测试的 Go 字体专用许可已另行核对并保留原文。
 
 ## AMLL：参考行为与迁移边界
 

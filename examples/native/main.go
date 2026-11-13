@@ -1,5 +1,5 @@
-// Command native is the M1 Native UI spike, using synthetic lyrics and a
-// simulated host clock. It does not open an audio device or load song files.
+// Command native demonstrates experimental M3 rendering with a simulated host
+// clock. It uses synthetic lyrics or a bounded local TTML file, without audio.
 package main
 
 import (
@@ -7,8 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -18,11 +18,17 @@ import (
 func main() {
 	lineCount := flag.Int("lines", 200, "synthetic line count (1..10000; compare 200, 2000, 10000)")
 	software := flag.Bool("software", false, "use MyGo's software renderer (MYGO_GPU=0)")
+	static := flag.Bool("static", false, "disable lyric and scroll animation for deterministic inspection")
+	font := flag.String("font", "", "font family fallback list (empty uses platform defaults)")
+	fontSize := flag.Float64("font-size", 0, "fixed lyric DIP size (0 uses the reference viewport sizing; maximum 512)")
+	effectsSoftware := flag.Bool("effects-software", false, "diagnostic: evaluate the full effect shaders in software (slow)")
+	ttmlPath := flag.String("ttml", "", "load a local TTML file instead of synthetic lyrics (host I/O only)")
+	startAt := flag.Duration("at", 0, "initial absolute track position, for example 90s")
 	smoke := flag.Bool("smoke", false, "exercise a real window and exit after 6 seconds")
 	smokeDuration := flag.Duration("smoke-duration", 0, "exercise a real window for this duration, then exit")
 	flag.Parse()
-	if *lineCount < 1 || *lineCount > 10000 || *smokeDuration < 0 {
-		log.Fatal("native: require 1 <= lines <= 10000 and nonnegative smoke-duration")
+	if *lineCount < 1 || *lineCount > 10000 || *smokeDuration < 0 || *startAt < 0 || *fontSize < 0 || *fontSize > 512 || math.IsNaN(*fontSize) || math.IsInf(*fontSize, 0) {
+		log.Fatal("native: require 1 <= lines <= 10000, nonnegative smoke-duration/at and 0 <= font-size <= 512")
 	}
 	if *software {
 		if err := os.Setenv("MYGO_GPU", "0"); err != nil {
@@ -32,16 +38,43 @@ func main() {
 	if *smoke && *smokeDuration == 0 {
 		*smokeDuration = 6 * time.Second
 	}
-	document, err := demoDocument(*lineCount)
+	document, _ := demoDocument(0)
+	if *ttmlPath != "" {
+		result, err := loadTTML(context.Background(), *ttmlPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		document = result.Document
+		log.Printf("native TTML: lines=%d diagnostics=%d", document.Len(), len(result.Diagnostics))
+		for _, diagnostic := range result.Diagnostics {
+			log.Printf("TTML %s at %d:%d: %s", diagnostic.Code, diagnostic.Line, diagnostic.Column, diagnostic.Message)
+		}
+	} else {
+		var err error
+		document, err = demoDocument(*lineCount)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	fonts, releaseFonts, err := openNativeReferenceFonts()
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer releaseFonts()
 	mygo.App.WhenReady(func() {
 		now := time.Now()
 		s := newScene(document, now)
+		s.fontProvider = fonts
+		s.forceStatic, s.font.Family = *static, *font
+		s.font.Size = float32(*fontSize)
+		if err := s.enableAMLL(*effectsSoftware); err != nil {
+			log.Fatal(err)
+		}
+		s.onSeek = func(at time.Time, request seekRequest) { s.seek(at, request.Position) }
+		s.clock.seek(now, *startAt)
 		s.clock.setPlaying(now, true)
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title: "mygo-amll · M1 Native spike", Width: 960, Height: 740,
+			Title: "mygo-amll · M3 Lyrics", Width: 960, Height: 740,
 			MinWidth: 600, MinHeight: 440, Content: ui.View(s.view),
 		})
 		ctx, cancel := context.WithCancel(context.Background())
@@ -63,26 +96,36 @@ func main() {
 	}
 }
 
-// view owns input and playback changes on the UI thread. Draw derives its
-// position from the anchor and requests paint-only frames while needed.
+// view owns input and clock updates on the UI thread. The reference path
+// prepares one timestamp here and requests animation-frame view updates;
+// Draw consumes that frozen state, including when it runs more than once.
 func (s *scene) view(c *ui.Context) {
 	if s.closed {
 		return
 	}
 	s.viewBuilds++
+	restored := s.hidden && !c.WindowHidden()
+	s.hidden = c.WindowHidden()
 	s.reduceMotion = c.Preferences().ReduceMotion
 	now := c.Now()
 	if c.Shortcut(0, ui.KeySpace) {
 		s.clock.setPlaying(now, !s.clock.playing)
 	}
 	if c.Shortcut(0, ui.KeyLeft) {
-		s.clock.seek(now, s.clock.positionAt(now)-5*time.Second)
+		s.seek(now, s.clock.positionAt(now)-5*time.Second)
 	}
 	if c.Shortcut(0, ui.KeyRight) {
-		s.clock.seek(now, s.clock.positionAt(now)+5*time.Second)
+		s.seek(now, s.clock.positionAt(now)+5*time.Second)
 	}
 	if c.Shortcut(0, ui.KeyHome) {
-		s.manualLine = -1
+		s.resume(now)
+	}
+	if c.Shortcut(0, ui.KeyEnter) {
+		index := s.selectedLine
+		if index < 0 {
+			index = s.focusAt(s.clock.positionAt(now))
+		}
+		s.requestSeek(now, index)
 	}
 	for _, scroll := range []struct {
 		key   ui.Key
@@ -94,8 +137,12 @@ func (s *scene) view(c *ui.Context) {
 	}
 
 	theme := c.Theme()
-	ui.Column(c).Fill().Padding(16).Gap(10).Children(func() {
-		ui.Text(c, "Native lyric rendering · M1").FontSize(22).Bold()
+	ui.Column(c).Fill().Padding(16).Gap(10).Draw(func(_ *ui.Painter, box ui.Rect) {
+		if s.hasReference() {
+			s.setReferenceHostSize(box.W, box.H)
+		}
+	}).Children(func() {
+		ui.Text(c, "Native lyric rendering · M3").FontSize(22).Bold()
 		ui.Row(c).WidthPercent(100).Wrap().Gap(8).Children(func() {
 			playLabel := "Play"
 			if s.clock.playing {
@@ -105,17 +152,16 @@ func (s *scene) view(c *ui.Context) {
 				s.clock.setPlaying(now, !s.clock.playing)
 			}
 			if ui.Button(c, "−5s").Label("Seek backward").Clicked() {
-				s.clock.seek(now, s.clock.positionAt(now)-5*time.Second)
+				s.seek(now, s.clock.positionAt(now)-5*time.Second)
 			}
 			if ui.Button(c, "+5s").Label("Seek forward").Clicked() {
-				s.clock.seek(now, s.clock.positionAt(now)+5*time.Second)
+				s.seek(now, s.clock.positionAt(now)+5*time.Second)
 			}
 			if ui.Button(c, "Restart").Clicked() {
-				s.clock.seek(now, 0)
-				s.manualLine = -1
+				s.seek(now, 0)
 			}
 			if ui.Button(c, "Follow").Clicked() {
-				s.manualLine = -1
+				s.resume(now)
 			}
 			for _, rate := range []float64{0.5, 1, 2} {
 				if ui.Button(c.Key(rate), fmt.Sprintf("%g×", rate)).Disabled(s.clock.rate == rate).Clicked() {
@@ -126,27 +172,53 @@ func (s *scene) view(c *ui.Context) {
 		ui.Row(c).WidthPercent(100).Wrap().Gap(12).Children(func() {
 			ui.Checkbox(c, &s.showBackground, "Static background")
 			ui.Checkbox(c, &s.forceStatic, "Static lyrics")
+			ui.TextInput(c, &s.font.Family).Label("Font families").Placeholder("System font fallback").Width(260)
 		})
-		ui.Text(c, "Space: play/pause · ← →: seek · ↑ ↓ / PgUp PgDn: browse · Home: follow").
+		ui.Text(c, "Drag / wheel: scroll · Click / Enter: seek · ↑ ↓ / PgUp PgDn: browse · Home: follow").
 			FontSize(12).TextColor(theme.TextMuted)
-		ui.Box(c.Key("lyrics")).Grow(1).WidthPercent(100).MinHeight(160).
-			Role(ui.RoleGroup).Label("Synthetic lyrics").Draw(s.draw)
+		if s.hasReference() {
+			ui.Box(c.Key("lyrics-background")).Grow(1).WidthPercent(100).MinHeight(160).
+				Draw(func(p *ui.Painter, box ui.Rect) {
+					p.Fill(box, ui.RGB(18, 21, 31), 0)
+					if s.showBackground {
+						p.FillGradient(box, ui.LinearGradient{From: ui.RGB(34, 49, 67), To: ui.RGB(38, 24, 51), Angle: 150}, 0)
+					}
+				}).Children(func() {
+				lyrics := ui.Box(c.Key("lyrics")).Fill().Focusable().Role(ui.RoleGroup).Label("Lyrics").
+					Description(s.accessibleLyrics(now)).HandleInput(s.input).Effect(s.referenceRootEffect()).Draw(s.draw)
+				s.setReferenceHover(lyrics.Hovered())
+				pointerX, pointerY, pointerOver := lyrics.PointerPosition()
+				s.setReferencePointer(pointerX, pointerY, pointerOver)
+			})
+		} else {
+			ui.Box(c.Key("lyrics")).Grow(1).WidthPercent(100).MinHeight(160).
+				Focusable().Role(ui.RoleGroup).Label("Lyrics").
+				Description(s.accessibleLyrics(now)).HandleInput(s.input).Draw(s.draw)
+		}
 	})
+	s.update(now, c.Instant() || restored && !s.hasReference())
+	clientW, clientH := c.Size()
+	if s.referenceViewFrame(now, clientW, clientH) {
+		c.AnimationFrame()
+	} else if delay := s.referenceWake(now); delay > 0 && !s.hidden {
+		c.After(delay)
+	}
+	if !s.hidden && s.clock.playing {
+		if delay := nextDelay(s.focusEvents, s.clock.positionAt(now), s.clock.rate); delay > 0 {
+			c.After(delay)
+		}
+	}
 }
 
-// scrollLines performs a single input action; the per-frame draw path never
-// scans or changes this manual scroll anchor.
-func (s *scene) scrollLines(now time.Time, delta int) {
-	if s.document == nil || s.document.Len() == 0 {
-		return
+// Expose the browsed/focused line and its annotations without broadcasting word
+// animation or rebuilding the whole accessibility tree on each paint-only frame.
+func (s *scene) accessibleLyrics(now time.Time) string {
+	index := s.focusAt(s.clock.positionAt(now))
+	if index < 0 {
+		return "No lyrics"
 	}
-	if s.manualLine < 0 {
-		position := s.clock.positionAt(now)
-		s.manualLine = sort.Search(s.document.Len(), func(i int) bool {
-			return s.document.Line(i).Start() > position
-		}) - 1
-	}
-	s.manualLine = min(max(s.manualLine+delta, 0), s.document.Len()-1)
+	line := s.document.Line(index)
+	return line.Text() + "\n" + line.Romanization() + "\n" + line.Translation()
 }
 
 // runWindowSmoke is opt-in native-window integration work, not a timing-based
@@ -172,7 +244,7 @@ func runWindowSmoke(ctx context.Context, win *mygo.Window, s *scene, duration ti
 			switch step {
 			case 1:
 				s.clock.setPlaying(now, false)
-				s.clock.seek(now, 9*time.Second)
+				s.seek(now, 9*time.Second)
 			case 2:
 				win.SetSize(740, 580)
 			case 3:
