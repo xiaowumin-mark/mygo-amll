@@ -24,6 +24,13 @@ func demoDocument(count int) (*lyric.Document, error) {
 		{"A longer synthetic line ", "wraps as the window narrows; ", "the whole paragraph keeps its shaping ", "while timed words cross visual lines."},
 		{"English ", "עברית ", "and العربية ", "in one line"},
 	}
+	translations := []string{
+		"屏幕上，新的清晨", "A synthetic timed lyric example", "在安静的画面中确认文字",
+		"Hello, world — synthetic bilingual text", "Emoji and a combining accent", "连字跨过时间词的边界",
+		"缩小窗口，检查整行换行和多个高亮矩形", "三种文字保留各自的阅读方向",
+	}
+	romanizations := []string{"", "Zhè shì hé chéng de zhú cí wén zì shì lì", "Shizuka na gamen de moji o tashikameru", "", "", "", "", ""}
+	languages := []string{"en", "zh-Hans", "ja", "ar", "en", "en", "en", ""}
 	lines := make([]lyric.Line, count)
 	var start time.Duration
 	for i := range lines {
@@ -40,7 +47,11 @@ func demoDocument(count int) (*lyric.Document, error) {
 			text.WriteString(part)
 			words[j] = lyric.Word{Text: part, Start: start + 3*time.Second*time.Duration(j)/time.Duration(len(parts)), End: start + 3*time.Second*time.Duration(j+1)/time.Duration(len(parts))}
 		}
-		lines[i] = lyric.Line{Text: text.String(), Start: start, End: start + 3*time.Second, Words: words, Duet: i%9 == 1}
+		lines[i] = lyric.Line{
+			Text: text.String(), Start: start, End: start + 3*time.Second, Words: words,
+			Translation: translations[i%len(segments)], Romanization: romanizations[i%len(segments)],
+			Language: languages[i%len(segments)], Duet: i%9 == 1, Background: i%16 == 9,
+		}
 	}
 	return lyric.NewDocument(lines)
 }

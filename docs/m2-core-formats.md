@@ -98,6 +98,8 @@ YRC/QRC metadata 键以 ASCII 字母开头，其余可为字母、数字、下�
 
 TTML 支持当前及旧 iTunes namespace、继承 TTML namespace 的 iTunesMetadata、首语言 inline/sidecar 翻译/音译与逐词音译匹配；未选语言不构成无损保存承诺。seq、frame/tick、嵌套 timed span、词内 annotation、嵌套背景和一般样式布局仍不在本 profile 内。DTD、外部实体声明、位置不合法的 XML 声明和外部资源引用被拒绝；未声明前缀、重复展开属性与 QName 配对错误返回结构性诊断。无资源 audio 属性不会启动 I/O。具体边界见 [RFC 0005](rfcs/0005-m2-corpus-compatibility.md)。
 
+M3 为已验收的实际 TTML 文件呈现增加受限 **Apple Word profile**：仅根 `tt` 上精确的 `http://music.apple.com/lyric-ttml-internal` 命名空间属性 `timing="Word"` 启用，可用任何前缀拼写；该 profile 接受无单位整数/小数秒。`body/div` 的 begin/end/dur 仍忽略，不叠加到 p/span 或背景词；p/span 的 `dur` 仍需显式 begin。此扩展不改变 M2 corpus compatibility 的服务范围，也不构成完整 Apple Music TTML 支持。
+
 ## 验证记录
 
 测试使用合成 fixture；源码是本仓实现，未复制上游代码、歌词或媒体。覆盖正常与错误输入、BOM/乱码/换行、重复时间与身份、零时长词、背景/对唱、空文件、最后一行、大输入中途取消、所有预算、严格模式与缓冲所有权。视觉状态包含 6,999/7,000/7,001 ms 边界、前奏、长重叠、全局曲终、随机线性对照、双向 seek、并发和零分配契约。

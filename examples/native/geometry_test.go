@@ -302,22 +302,30 @@ func TestGeometryCachePinnedByteBudget(t *testing.T) {
 	font := ui.Font{Size: 20}
 	var cache geometryCache
 	cache.beginFrame()
-	for i := 0; i < 3; i++ {
+	pinned := 0
+	for i := range lines {
 		geometry, err := cache.get(document, i, font, 300, 1)
+		if errors.Is(err, errGeometryLimit) {
+			break
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
 		cache.pin(geometry)
+		pinned++
+	}
+	if pinned == 0 || pinned == len(lines) {
+		t.Fatalf("expected admission followed by byte-budget rejection; admitted %d", pinned)
 	}
 	previousBytes := cache.bytes
-	if geometry, err := cache.get(document, 3, font, 300, 1); geometry != nil || !errors.Is(err, errGeometryLimit) {
+	if geometry, err := cache.get(document, pinned, font, 300, 1); geometry != nil || !errors.Is(err, errGeometryLimit) {
 		t.Fatalf("pinned geometry must share the byte budget: %v, %v", geometry, err)
 	}
-	if cache.bytes != previousBytes || len(cache.entries) != 3 {
+	if cache.bytes != previousBytes || len(cache.entries) != pinned {
 		t.Fatal("rejected layout evicted the current frame's geometry")
 	}
 	cache.beginFrame()
-	if geometry, err := cache.get(document, 3, font, 300, 1); err != nil || geometry == nil {
+	if geometry, err := cache.get(document, pinned, font, 300, 1); err != nil || geometry == nil {
 		t.Fatalf("unpin should allow bounded eviction next frame: %v", err)
 	}
 	if cache.bytes > geometryByteLimit || len(cache.entries) > geometryEntryLimit {

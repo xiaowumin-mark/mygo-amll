@@ -35,7 +35,13 @@ func TestFormatVisualAgreement(t *testing.T) {
 			}
 			clear(input)
 			doc := result.Document
-			if doc.Len() != 2 || doc.Line(0).Text() != "A B" || doc.Line(0).WordCount() != 2 || doc.Line(0).Word(0).Text != "A " || doc.Line(0).Word(1).End != 3*time.Second {
+			wantFirstWord := "A "
+			if tc.name == "ttml" {
+				// AMLL normalizes whitespace at a timed span boundary; the line
+				// keeps its separating space while the first word does not.
+				wantFirstWord = "A"
+			}
+			if doc.Len() != 2 || doc.Line(0).Text() != "A B" || doc.Line(0).WordCount() != 2 || doc.Line(0).Word(0).Text != wantFirstWord || doc.Line(0).Word(1).End != 3*time.Second {
 				t.Fatal("format changed synthetic song semantics or retained source bytes")
 			}
 			if doc.Line(0).ID() == doc.Line(1).ID() {

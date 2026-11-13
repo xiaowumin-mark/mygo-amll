@@ -9,9 +9,13 @@ acceptance criteria. Read `docs/implementation.md`, `docs/architecture.md`,
 Distinguish implemented capabilities from proposals and unmeasured targets.
 
 The current implementation contains `lyric`, `timeline`, bounded format parsers,
-console examples, and an experimental Native UI spike in `examples/native`.
+console examples, internal height/motion algorithms, and a Native rendering
+prototype in `examples/native`. The owner accepted the current M3 visual
+implementation on 2026-11-13; passing foundation tests alone does not establish
+AMLL parity or actual screen-presentation performance.
 See `docs/m1-native.md` for Native validation gaps and `docs/m2-core-formats.md`
-for parser subsets and the owner-accepted M2 scope; there is no stable Native component
+for parser subsets and the owner-accepted M2 scope, and `docs/m3-rendering.md` for
+current rendering, budgets and validation gaps; there is no stable Native component
 API. Dynamic backgrounds remain planned. Do not introduce empty packages or
 describe the spike as a finished renderer.
 
